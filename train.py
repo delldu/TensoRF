@@ -3,21 +3,19 @@ import os
 from tqdm.auto import tqdm
 from opt import config_parser
 
-
-
-import json, random
+# import json, random
 from renderer import *
 from utils import *
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 import datetime
 
 from dataLoader import dataset_dict
 import sys
+import pdb
 
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 renderer = OctreeRender_trilinear_fast
 
 
@@ -64,10 +62,11 @@ def render_test(args):
     ckpt = torch.load(args.ckpt, map_location=device)
     kwargs = ckpt['kwargs']
     kwargs.update({'device': device})
-    tensorf = eval(args.model_name)(**kwargs)
+    tensorf = eval(args.model_name)(**kwargs) # args.model_name -- 'TensorVMSplit'
     tensorf.load(ckpt)
 
     logfolder = os.path.dirname(args.ckpt)
+
     if args.render_train:
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
         train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
@@ -80,11 +79,12 @@ def render_test(args):
         evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/{args.expname}/imgs_test_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
 
-    if args.render_path:
-        c2ws = test_dataset.render_path
-        os.makedirs(f'{logfolder}/{args.expname}/imgs_path_all', exist_ok=True)
-        evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/{args.expname}/imgs_path_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+    # xxxx8888
+    # if args.render_path:
+    #     c2ws = test_dataset.render_path
+    #     os.makedirs(f'{logfolder}/{args.expname}/imgs_path_all', exist_ok=True)
+    #     evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/{args.expname}/imgs_path_all/',
+    #                             N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
 
 def reconstruction(args):
 
@@ -114,16 +114,13 @@ def reconstruction(args):
     os.makedirs(f'{logfolder}/imgs_vis', exist_ok=True)
     os.makedirs(f'{logfolder}/imgs_rgba', exist_ok=True)
     os.makedirs(f'{logfolder}/rgba', exist_ok=True)
-    summary_writer = SummaryWriter(logfolder)
-
-
+    # summary_writer = SummaryWriter(logfolder)
 
     # init parameters
     # tensorVM, renderer = init_parameters(args, train_dataset.scene_bbox.to(device), reso_list[0])
     aabb = train_dataset.scene_bbox.to(device)
     reso_cur = N_to_reso(args.N_voxel_init, aabb)
     nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
-
 
     if args.ckpt is not None:
         ckpt = torch.load(args.ckpt, map_location=device)
@@ -136,6 +133,40 @@ def reconstruction(args):
                     density_n_comp=n_lamb_sigma, appearance_n_comp=n_lamb_sh, app_dim=args.data_dim_color, near_far=near_far,
                     shadingMode=args.shadingMode, alphaMask_thres=args.alpha_mask_thre, density_shift=args.density_shift, distance_scale=args.distance_scale,
                     pos_pe=args.pos_pe, view_pe=args.view_pe, fea_pe=args.fea_pe, featureC=args.featureC, step_ratio=args.step_ratio, fea2denseAct=args.fea2denseAct)
+
+    # (Pdb) tensorf
+    # TensorVMSplit(
+    #   (density_plane): ParameterList(
+    #       (0): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
+    #       (1): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
+    #       (2): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
+    #   )
+    #   (density_line): ParameterList(
+    #       (0): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x1 (GPU 0)]
+    #       (1): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x1 (GPU 0)]
+    #       (2): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x1 (GPU 0)]
+    #   )
+    #   (app_plane): ParameterList(
+    #       (0): Parameter containing: [torch.cuda.FloatTensor of size 1x48x128x128 (GPU 0)]
+    #       (1): Parameter containing: [torch.cuda.FloatTensor of size 1x48x128x128 (GPU 0)]
+    #       (2): Parameter containing: [torch.cuda.FloatTensor of size 1x48x128x128 (GPU 0)]
+    #   )
+    #   (app_line): ParameterList(
+    #       (0): Parameter containing: [torch.cuda.FloatTensor of size 1x48x128x1 (GPU 0)]
+    #       (1): Parameter containing: [torch.cuda.FloatTensor of size 1x48x128x1 (GPU 0)]
+    #       (2): Parameter containing: [torch.cuda.FloatTensor of size 1x48x128x1 (GPU 0)]
+    #   )
+    #   (basis_mat): Linear(in_features=144, out_features=27, bias=False)
+    #   (renderModule): MLPRender_Fea(
+    #     (mlp): Sequential(
+    #       (0): Linear(in_features=150, out_features=128, bias=True)
+    #       (1): ReLU(inplace=True)
+    #       (2): Linear(in_features=128, out_features=128, bias=True)
+    #       (3): ReLU(inplace=True)
+    #       (4): Linear(in_features=128, out_features=3, bias=True)
+    #     )
+    #   )
+    # )
 
 
     grad_vars = tensorf.get_optparam_groups(args.lr_init, args.lr_basis)
@@ -158,11 +189,12 @@ def reconstruction(args):
     PSNRs,PSNRs_test = [],[0]
 
     allrays, allrgbs = train_dataset.all_rays, train_dataset.all_rgbs
-    if not args.ndc_ray:
+
+    if not args.ndc_ray: # True
         allrays, allrgbs = tensorf.filtering_rays(allrays, allrgbs, bbox_only=True)
     trainingSampler = SimpleSampler(allrays.shape[0], args.batch_size)
-
-    Ortho_reg_weight = args.Ortho_weight
+    
+    Ortho_reg_weight = args.Ortho_weight #  args.Ortho_weight -- 0.0
     print("initial Ortho_reg_weight", Ortho_reg_weight)
 
     L1_reg_weight = args.L1_weight_inital
@@ -174,13 +206,11 @@ def reconstruction(args):
 
     pbar = tqdm(range(args.n_iters), miniters=args.progress_refresh_rate, file=sys.stdout)
     for iteration in pbar:
-
-
         ray_idx = trainingSampler.nextids()
         rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device)
 
         #rgb_map, alphas_map, depth_map, weights, uncertainty
-        rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
+        rgb_map, depth_map = renderer(rays_train, tensorf, chunk=args.batch_size,
                                 N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True)
 
         loss = torch.mean((rgb_map - rgb_train) ** 2)
@@ -191,22 +221,23 @@ def reconstruction(args):
         if Ortho_reg_weight > 0:
             loss_reg = tensorf.vector_comp_diffs()
             total_loss += Ortho_reg_weight*loss_reg
-            summary_writer.add_scalar('train/reg', loss_reg.detach().item(), global_step=iteration)
+            # summary_writer.add_scalar('train/reg', loss_reg.detach().item(), global_step=iteration)
         if L1_reg_weight > 0:
             loss_reg_L1 = tensorf.density_L1()
             total_loss += L1_reg_weight*loss_reg_L1
-            summary_writer.add_scalar('train/reg_l1', loss_reg_L1.detach().item(), global_step=iteration)
+            # summary_writer.add_scalar('train/reg_l1', loss_reg_L1.detach().item(), global_step=iteration)
 
         if TV_weight_density>0:
             TV_weight_density *= lr_factor
             loss_tv = tensorf.TV_loss_density(tvreg) * TV_weight_density
             total_loss = total_loss + loss_tv
-            summary_writer.add_scalar('train/reg_tv_density', loss_tv.detach().item(), global_step=iteration)
+            # summary_writer.add_scalar('train/reg_tv_density', loss_tv.detach().item(), global_step=iteration)
+
         if TV_weight_app>0:
             TV_weight_app *= lr_factor
             loss_tv = tensorf.TV_loss_app(tvreg)*TV_weight_app
             total_loss = total_loss + loss_tv
-            summary_writer.add_scalar('train/reg_tv_app', loss_tv.detach().item(), global_step=iteration)
+            # summary_writer.add_scalar('train/reg_tv_app', loss_tv.detach().item(), global_step=iteration)
 
         optimizer.zero_grad()
         total_loss.backward()
@@ -215,9 +246,8 @@ def reconstruction(args):
         loss = loss.detach().item()
         
         PSNRs.append(-10.0 * np.log(loss) / np.log(10.0))
-        summary_writer.add_scalar('train/PSNR', PSNRs[-1], global_step=iteration)
-        summary_writer.add_scalar('train/mse', loss, global_step=iteration)
-
+        # summary_writer.add_scalar('train/PSNR', PSNRs[-1], global_step=iteration)
+        # summary_writer.add_scalar('train/mse', loss, global_step=iteration)
 
         for param_group in optimizer.param_groups:
             param_group['lr'] = param_group['lr'] * lr_factor
@@ -236,9 +266,7 @@ def reconstruction(args):
         if iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0:
             PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
                                     prtx=f'{iteration:06d}_', N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False)
-            summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
-
-
+            # summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
 
         if iteration in update_AlphaMask_list:
 
@@ -287,16 +315,16 @@ def reconstruction(args):
         os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
         PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_test_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
-        summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test), global_step=iteration)
+        # summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test), global_step=iteration)
         print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
 
-    if args.render_path:
-        c2ws = test_dataset.render_path
-        # c2ws = test_dataset.poses
-        print('========>',c2ws.shape)
-        os.makedirs(f'{logfolder}/imgs_path_all', exist_ok=True)
-        evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/imgs_path_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+    # if args.render_path:
+    #     c2ws = test_dataset.render_path
+    #     # c2ws = test_dataset.poses
+    #     print('========>',c2ws.shape)
+    #     os.makedirs(f'{logfolder}/imgs_path_all', exist_ok=True)
+    #     evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/imgs_path_all/',
+    #                             N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
 
 
 if __name__ == '__main__':
@@ -307,6 +335,29 @@ if __name__ == '__main__':
 
     args = config_parser()
     print(args)
+    # (Pdb) pp args
+    # Namespace(config='configs/lego.txt', 
+    #     expname='tensorf_lego_VM', basedir='./log', add_timestamp=0, 
+    #     datadir='./data/nerf_synthetic/lego', progress_refresh_rate=10, 
+    #     with_depth=False, downsample_train=1.0, downsample_test=1.0, 
+    #     model_name='TensorVMSplit', batch_size=4096, n_iters=3000, 
+    #     dataset_name='blender', lr_init=0.02, lr_basis=0.001, 
+    #     lr_decay_iters=-1, lr_decay_target_ratio=0.1, 
+    #     lr_upsample_reset=1, L1_weight_inital=8e-05, 
+    #     L1_weight_rest=4e-05, Ortho_weight=0.0, 
+    #     TV_weight_density=0.0, TV_weight_app=0.0, 
+    #     n_lamb_sigma=[16, 16, 16], n_lamb_sh=[48, 48, 48], 
+    #     data_dim_color=27, rm_weight_mask_thre=0.0001, 
+    #     alpha_mask_thre=0.0001, distance_scale=25, 
+    #     density_shift=-10, shadingMode='MLP_Fea', 
+    #     pos_pe=6, view_pe=2, fea_pe=2, featureC=128, 
+    #     ckpt=None, render_only=0, render_test=1, 
+    #     render_train=0, render_path=0, export_mesh=0, 
+    #     lindisp=False, perturb=1.0, accumulate_decay=0.998, 
+    #     fea2denseAct='softplus', ndc_ray=0, nSamples=1000000.0, 
+    #     step_ratio=0.5, white_bkgd=False, N_voxel_init=2097156, 
+    #     N_voxel_final=16777216, upsamp_list=[2000, 3000, 4000, 5500, 7000], 
+    #     update_AlphaMask_list=[2000, 4000], idx_view=0, N_vis=5, vis_every=10000)
 
     if  args.export_mesh:
         export_mesh(args)

@@ -1,5 +1,5 @@
 from .tensorBase import *
-
+import pdb
 
 class TensorVM(TensorBase):
     def __init__(self, aabb, gridSize, device, **kargs):
@@ -44,6 +44,8 @@ class TensorVM(TensorBase):
         return sigma_feature, app_features
 
     def compute_densityfeature(self, xyz_sampled):
+        pdb.set_trace()
+
         coordinate_plane = torch.stack((xyz_sampled[..., self.matMode[0]], xyz_sampled[..., self.matMode[1]], xyz_sampled[..., self.matMode[2]])).detach().view(3, -1, 1, 2)
         coordinate_line = torch.stack((xyz_sampled[..., self.vecMode[0]], xyz_sampled[..., self.vecMode[1]], xyz_sampled[..., self.vecMode[2]]))
         coordinate_line = torch.stack((torch.zeros_like(coordinate_line), coordinate_line), dim=-1).detach().view(3, -1, 1, 2)
@@ -59,6 +61,8 @@ class TensorVM(TensorBase):
         return sigma_feature
     
     def compute_appfeature(self, xyz_sampled):
+        pdb.set_trace()
+
         coordinate_plane = torch.stack((xyz_sampled[..., self.matMode[0]], xyz_sampled[..., self.matMode[1]], xyz_sampled[..., self.matMode[2]])).detach().view(3, -1, 1, 2)
         coordinate_line = torch.stack((xyz_sampled[..., self.vecMode[0]], xyz_sampled[..., self.vecMode[1]], xyz_sampled[..., self.vecMode[2]]))
         coordinate_line = torch.stack((torch.zeros_like(coordinate_line), coordinate_line), dim=-1).detach().view(3, -1, 1, 2)
@@ -94,6 +98,7 @@ class TensorVM(TensorBase):
     
     @torch.no_grad()
     def up_sampling_VM(self, plane_coef, line_coef, res_target):
+        pdb.set_trace()
 
         for i in range(len(self.vecMode)):
             vec_id = self.vecMode[i]
@@ -139,7 +144,7 @@ class TensorVM(TensorBase):
 class TensorVMSplit(TensorBase):
     def __init__(self, aabb, gridSize, device, **kargs):
         super(TensorVMSplit, self).__init__(aabb, gridSize, device, **kargs)
-
+        # gridSize = [128, 128, 128]
 
     def init_svd_volume(self, res, device):
         self.density_plane, self.density_line = self.init_one_svd(self.density_n_comp, self.gridSize, 0.1, device)
