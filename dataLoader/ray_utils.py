@@ -2,7 +2,7 @@ import torch, re
 import numpy as np
 from torch import searchsorted
 from kornia import create_meshgrid
-
+import pdb
 
 # from utils import index_point_feature
 
@@ -31,7 +31,16 @@ def get_ray_directions(H, W, focal, center=None):
     Outputs:
         directions: (H, W, 3), the direction of the rays in camera coordinate
     """
+
+    # H = 800
+    # W = 800
+    # focal = [1111.1110311937682, 1111.1110311937682]
+    # center = None
+
     grid = create_meshgrid(H, W, normalized_coordinates=False)[0] + 0.5
+    # grid.size() -- [800, 800, 2]
+    # (Pdb) grid[0][0] -- [0.5000, 0.5000]
+    # (Pdb) grid[799][799] -- [799.5000, 799.5000]
 
     i, j = grid.unbind(-1)
     # the direction here is without +0.5 pixel centering as calibration is not so accurate

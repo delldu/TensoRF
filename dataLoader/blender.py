@@ -5,14 +5,14 @@ from tqdm import tqdm
 import os
 from PIL import Image
 from torchvision import transforms as T
-
+import pdb
 
 from .ray_utils import *
 
 
 class BlenderDataset(Dataset):
     def __init__(self, datadir, split='train', downsample=1.0, is_stack=False, N_vis=-1):
-
+        # datadir = './data/nerf_synthetic/lego'
         self.N_vis = N_vis
         self.root_dir = datadir
         self.split = split
@@ -23,34 +23,43 @@ class BlenderDataset(Dataset):
         self.scene_bbox = torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]])
         self.blender2opencv = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
         self.read_meta()
-        self.define_proj_mat()
+        # self.define_proj_mat()
 
         self.white_bg = True
-        self.near_far = [2.0,6.0]
+        self.near_far = [2.0, 6.0]
         
         self.center = torch.mean(self.scene_bbox, axis=0).float().view(1, 1, 3)
         self.radius = (self.scene_bbox[1] - self.center).float().view(1, 1, 3)
-        self.downsample=downsample
+        self.downsample = downsample
 
-    def read_depth(self, filename):
-        depth = np.array(read_pfm(filename)[0], dtype=np.float32)  # (800, 800)
-        return depth
+        # self.center -- [[[0., 0., 0.]]]
+        # self.radius -- [[[1.5000, 1.5000, 1.5000]]]
+        # (Pdb) self.scene_bbox
+        # [[-1.5000, -1.5000, -1.5000],
+        # [ 1.5000,  1.5000,  1.5000]]
+
+    # def read_depth(self, filename):
+    #     depth = np.array(read_pfm(filename)[0], dtype=np.float32)  # (800, 800)
+    #     return depth
     
     def read_meta(self):
-
+        # /data/nerf_synthetic/lego/transforms_train.json
         with open(os.path.join(self.root_dir, f"transforms_{self.split}.json"), 'r') as f:
             self.meta = json.load(f)
 
         w, h = self.img_wh
+        # self.meta['camera_angle_x'] -- 0.6911112070083618
         self.focal = 0.5 * 800 / np.tan(0.5 * self.meta['camera_angle_x'])  # original focal length
         self.focal *= self.img_wh[0] / 800  # modify focal length to match size self.img_wh
 
-
         # ray directions for all pixels, same for all images (same H, W, focal)
-        self.directions = get_ray_directions(h, w, [self.focal,self.focal])  # (h, w, 3)
+        self.directions = get_ray_directions(h, w, [self.focal, self.focal])  # (h, w, 3)
         self.directions = self.directions / torch.norm(self.directions, dim=-1, keepdim=True)
         self.intrinsics = torch.tensor([[self.focal,0,w/2],[0,self.focal,h/2],[0,0,1]]).float()
-
+        # (Pdb) self.intrinsics
+        # tensor([[ 1111.1111,     0.0000,   400.0000],
+        #         [    0.0000,  1111.1111,   400.0000],
+        #         [    0.0000,     0.0000,     1.0000]])
         self.image_paths = []
         self.poses = []
         self.all_rays = []
@@ -59,11 +68,15 @@ class BlenderDataset(Dataset):
         self.all_depth = []
         self.downsample=1.0
 
-        img_eval_interval = 1 if self.N_vis < 0 else len(self.meta['frames']) // self.N_vis
+        img_eval_interval = 1 if self.N_vis < 0 else len(self.meta['frames']) // self.N_vis # 1
         idxs = list(range(0, len(self.meta['frames']), img_eval_interval))
-        for i in tqdm(idxs, desc=f'Loading data {self.split} ({len(idxs)})'):#img_list:#
-
+        for i in tqdm(idxs, desc=f'Loading data {self.split} ({len(idxs)})'): #img_list:#
             frame = self.meta['frames'][i]
+            # (Pdb) self.blender2opencv
+            # array([[ 1,  0,  0,  0],
+            #        [ 0, -1,  0,  0],
+            #        [ 0,  0, -1,  0],
+            #        [ 0,  0,  0,  1]])
             pose = np.array(frame['transform_matrix']) @ self.blender2opencv
             c2w = torch.FloatTensor(pose)
             self.poses += [c2w]
@@ -72,35 +85,36 @@ class BlenderDataset(Dataset):
             self.image_paths += [image_path]
             img = Image.open(image_path)
             
-            if self.downsample!=1.0:
+            if self.downsample != 1.0: # False
                 img = img.resize(self.img_wh, Image.LANCZOS)
+
             img = self.transform(img)  # (4, h, w)
             img = img.view(4, -1).permute(1, 0)  # (h*w, 4) RGBA
             img = img[:, :3] * img[:, -1:] + (1 - img[:, -1:])  # blend A to RGB
             self.all_rgbs += [img]
 
-
             rays_o, rays_d = get_rays(self.directions, c2w)  # both (h*w, 3)
+            # rays_o.size() -- [640000, 3], rays_o[i] -- [2.1031, -1.0323,  3.2804]
+            # rays_d.size() -- [640000, 3]
             self.all_rays += [torch.cat([rays_o, rays_d], 1)]  # (h*w, 6)
 
-
         self.poses = torch.stack(self.poses)
-        if not self.is_stack:
+        if not self.is_stack: # True
             self.all_rays = torch.cat(self.all_rays, 0)  # (len(self.meta['frames])*h*w, 3)
             self.all_rgbs = torch.cat(self.all_rgbs, 0)  # (len(self.meta['frames])*h*w, 3)
-
-#             self.all_depth = torch.cat(self.all_depth, 0)  # (len(self.meta['frames])*h*w, 3)
         else:
             self.all_rays = torch.stack(self.all_rays, 0)  # (len(self.meta['frames]),h*w, 3)
             self.all_rgbs = torch.stack(self.all_rgbs, 0).reshape(-1,*self.img_wh[::-1], 3)  # (len(self.meta['frames]),h,w,3)
-            # self.all_masks = torch.stack(self.all_masks, 0).reshape(-1,*self.img_wh[::-1])  # (len(self.meta['frames]),h,w,3)
-
+        # self.all_rays.size() -- [100x800x800, 6]
+        # self.all_rgbs.size() -- [100x800x800, 3], RGB
 
     def define_transforms(self):
         self.transform = T.ToTensor()
         
-    def define_proj_mat(self):
-        self.proj_mat = self.intrinsics.unsqueeze(0) @ torch.inverse(self.poses)[:,:3]
+    # def define_proj_mat(self):
+    #     # self.intrinsics.unsqueeze(0).size() -- [1, 3, 3]
+    #     # self.poses.size() -- [100, 4, 4]
+    #     self.proj_mat = self.intrinsics.unsqueeze(0) @ torch.inverse(self.poses)[:,:3]
 
     def world2ndc(self,points,lindisp=None):
         device = points.device

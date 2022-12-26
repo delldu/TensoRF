@@ -13,11 +13,12 @@ from dataLoader import dataset_dict
 import sys
 import pdb
 
+import torch
+torch.set_printoptions(sci_mode=False)
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 renderer = OctreeRender_trilinear_fast
-
 
 class SimpleSampler:
     def __init__(self, total, batch):
@@ -44,6 +45,8 @@ def export_mesh(args):
     tensorf.load(ckpt)
 
     alpha,_ = tensorf.getDenseAlpha()
+
+    # alpha.size() -- [115, 205, 133]
     convert_sdf_samples_to_ply(alpha.cpu(), f'{args.ckpt[:-3]}.ply',bbox=tensorf.aabb.cpu(), level=0.005)
 
 
@@ -54,7 +57,7 @@ def render_test(args):
     test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True)
     white_bg = test_dataset.white_bg
     ndc_ray = args.ndc_ray
-
+    # args.downsample_train -- 1.0
     if not os.path.exists(args.ckpt):
         print('the ckpt path does not exists!!')
         return
@@ -101,7 +104,6 @@ def reconstruction(args):
     update_AlphaMask_list = args.update_AlphaMask_list
     n_lamb_sigma = args.n_lamb_sigma
     n_lamb_sh = args.n_lamb_sh
-
     
     if args.add_timestamp:
         logfolder = f'{args.basedir}/{args.expname}{datetime.datetime.now().strftime("-%Y%m%d-%H%M%S")}'
@@ -119,8 +121,8 @@ def reconstruction(args):
     # init parameters
     # tensorVM, renderer = init_parameters(args, train_dataset.scene_bbox.to(device), reso_list[0])
     aabb = train_dataset.scene_bbox.to(device)
-    reso_cur = N_to_reso(args.N_voxel_init, aabb)
-    nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
+    reso_cur = N_to_reso(args.N_voxel_init, aabb) # [128, 128, 128]
+    nSamples = min(args.nSamples, cal_n_samples(reso_cur, args.step_ratio)) # 100x100x100 --> 443
 
     if args.ckpt is not None:
         ckpt = torch.load(args.ckpt, map_location=device)
@@ -167,22 +169,44 @@ def reconstruction(args):
     #     )
     #   )
     # )
-
-
     grad_vars = tensorf.get_optparam_groups(args.lr_init, args.lr_basis)
-    if args.lr_decay_iters > 0:
+    # (Pdb) for g in grad_vars: print(g)
+    # {'params': ParameterList(
+    #     (0): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x1 (GPU 0)]
+    #     (1): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x1 (GPU 0)]
+    #     (2): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x1 (GPU 0)]
+    # ), 'lr': 0.02}
+    # {'params': ParameterList(
+    #     (0): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
+    #     (1): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
+    #     (2): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
+    # ), 'lr': 0.02}
+    # {'params': ParameterList(
+    #     (0): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x1 (GPU 0)]
+    #     (1): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x1 (GPU 0)]
+    #     (2): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x1 (GPU 0)]
+    # ), 'lr': 0.02}
+    # {'params': ParameterList(
+    #     (0): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
+    #     (1): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
+    #     (2): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
+    # ), 'lr': 0.02}
+    # {'params': <generator object Module.parameters at 0x7f075c487040>, 'lr': 0.001}
+    # {'params': <generator object Module.parameters at 0x7f075c4870b0>, 'lr': 0.001}
+    if args.lr_decay_iters > 0: # False
         lr_factor = args.lr_decay_target_ratio**(1/args.lr_decay_iters)
     else:
-        args.lr_decay_iters = args.n_iters
-        lr_factor = args.lr_decay_target_ratio**(1/args.n_iters)
-
+        args.lr_decay_iters = args.n_iters # 3000
+        lr_factor = args.lr_decay_target_ratio**(1/args.n_iters) # lr_decay_target_ratio -- 0.1
+    # lr_factor -- 0.9992327661102197
     print("lr decay", args.lr_decay_target_ratio, args.lr_decay_iters)
     
     optimizer = torch.optim.Adam(grad_vars, betas=(0.9,0.99))
 
-
     #linear in logrithmic space
-    N_voxel_list = (torch.round(torch.exp(torch.linspace(np.log(args.N_voxel_init), np.log(args.N_voxel_final), len(upsamp_list)+1))).long()).tolist()[1:]
+    # upsamp_list=[2000, 3000, 4000, 5500, 7000]
+    N_voxel_list = (torch.round(torch.exp(torch.linspace(np.log(args.N_voxel_init), \
+        np.log(args.N_voxel_final), len(upsamp_list)+1))).long()).tolist()[1:]
 
 
     torch.cuda.empty_cache()

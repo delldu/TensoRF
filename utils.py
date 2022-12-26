@@ -60,8 +60,6 @@ def cal_n_samples(reso, step_ratio=0.5):
     return int(np.linalg.norm(reso)/step_ratio)
 
 
-
-
 __LPIPS__ = {}
 def init_lpips(net_name, device):
     assert net_name in ['alex', 'vgg']
