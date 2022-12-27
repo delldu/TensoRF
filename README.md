@@ -41,10 +41,10 @@ we provide a few examples in the configuration folder, please note:
  `model_name`, choices = ['TensorVMSplit', 'TensorCP'], corresponding to the VM and CP decomposition. 
  You need to uncomment the last a few rows of the configuration file if you want to training with the TensorCP model；
 
- `n_lamb_sigma` and `n_lamb_sh` are string type refer to the basis number of density and appearance along XYZ
+ `dense_n_comp` and `color_n_comp` are string type refer to the basis number of density and appearance along XYZ
 dimension;
 
- `N_voxel_init` and `N_voxel_final` control the resolution of matrix and vector;
+ `n_voxel_init` and `n_voxel_final` control the resolution of matrix and vector;
 
  `N_vis` and `vis_every` control the visualization during training;
 

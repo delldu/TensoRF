@@ -67,6 +67,9 @@ class BlenderDataset(Dataset):
 
         img_eval_interval = 1 if self.N_vis < 0 else len(self.meta['frames']) // self.N_vis # 1
         idxs = list(range(0, len(self.meta['frames']), img_eval_interval))
+        if self.split == 'test':
+            idxs = idxs[:50] # speed upp test
+
         for i in tqdm(idxs, desc=f'Loading data {self.split} ({len(idxs)})'): #img_list:#
             frame = self.meta['frames'][i]
             # (Pdb) self.blender2opencv

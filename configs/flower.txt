@@ -9,8 +9,8 @@ downsample_train = 4.0
 n_iters = 25000
 batch_size = 4096
 
-N_voxel_init = 2097156 # 128**3
-N_voxel_final = 262144000 # 640**3
+n_voxel_init = 2097156 # 128**3
+n_voxel_final = 262144000 # 640**3
 upsample_list = [2000,3000,4000,5500]
 update_alphamask_list = [2500]
 
@@ -20,10 +20,8 @@ vis_every = 10000
 render_test = 1
 render_path = 1
 
-n_lamb_sigma = [16,4,4]
-n_lamb_sh = [48,12,12]
-
-feat2denseAct = relu
+dense_n_comp = [16,4,4]
+color_n_comp = [48,12,12]
 
 view_pe = 0
 feat_pe = 0

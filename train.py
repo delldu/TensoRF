@@ -1,19 +1,20 @@
-
 import os
-from tqdm.auto import tqdm
-from opt import config_parser
-
-# import json, random
-from renderer import *
-from utils import *
-# from torch.utils.tensorboard import SummaryWriter
-import datetime
-
-from dataLoader import dataset_dict
 import sys
 import pdb
 
 import torch
+
+from tqdm.auto import tqdm
+
+# import json, random
+from renderer import *
+from utils import *
+
+from opt import config_parser
+from dataLoader import dataset_dict
+from models.tensoRF import TensorVMSplit
+from dataLoader.blender import BlenderDataset
+
 torch.set_printoptions(sci_mode=False)
 
 
@@ -35,73 +36,16 @@ class SimpleSampler:
         return self.ids[self.curr:self.curr+self.batch]
 
 
-@torch.no_grad()
-def export_mesh(args):
-
-    ckpt = torch.load(args.ckpt, map_location=device)
-    kwargs = ckpt['kwargs']
-    kwargs.update({'device': device})
-    tensorf = eval(args.model_name)(**kwargs)
-    tensorf.load(ckpt)
-
-    alpha,_ = tensorf.getDenseAlpha()
-
-    # alpha.size() -- [115, 205, 133]
-    convert_sdf_samples_to_ply(alpha.cpu(), f'{args.ckpt[:-3]}.ply',bbox=tensorf.aabb.cpu(), level=0.005)
-
-
-@torch.no_grad()
-def render_test(args):
-    return
-
+def do_train(args):
     # init dataset
-    dataset = dataset_dict[args.dataset_name]
-    test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train)
-    white_bg = test_dataset.white_bg
-    # args.downsample_train -- 1.0
-    if not os.path.exists(args.ckpt):
-        print('the ckpt path does not exists!!')
-        return
-
-    ckpt = torch.load(args.ckpt, map_location=device)
-    kwargs = ckpt['kwargs']
-    kwargs.update({'device': device})
-    tensorf = eval(args.model_name)(**kwargs) # args.model_name -- 'TensorVMSplit'
-    tensorf.load(ckpt)
-
-    logfolder = os.path.dirname(args.ckpt)
-
-    if args.render_train:
-        os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
-        train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
-        PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, device=device)
-        print(f'======> {args.expname} train all psnr: {np.mean(PSNRs_test)} <========================')
-
-    if args.render_test:
-        os.makedirs(f'{logfolder}/{args.expname}/imgs_test_all', exist_ok=True)
-        evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/{args.expname}/imgs_test_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, device=device)
-
-    # xxxx8888
-    # if args.render_path:
-    #     c2ws = test_dataset.render_path
-    #     os.makedirs(f'{logfolder}/{args.expname}/imgs_path_all', exist_ok=True)
-    #     evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/{args.expname}/imgs_path_all/',
-    #                             N_vis=-1, N_samples=-1, white_bg = white_bg, device=device)
-
-def reconstruction(args):
-
-    # init dataset
-    dataset = dataset_dict[args.dataset_name]
-    train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=False)
-    test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True)
+    train_dataset = BlenderDataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=False)
+    test_dataset = BlenderDataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True)
     white_bg = train_dataset.white_bg
     near_far = train_dataset.near_far
 
     # init resolution
-    n_lamb_sigma = args.n_lamb_sigma
-    n_lamb_sh = args.n_lamb_sh
+    dense_n_comp = args.dense_n_comp
+    color_n_comp = args.color_n_comp
     logfolder = f'{args.basedir}/{args.expname}'
     
     # init log file
@@ -112,39 +56,36 @@ def reconstruction(args):
 
     # init parameters
     aabb = train_dataset.scene_bbox.to(device)
-    reso_cur = N_to_reso(args.N_voxel_init, aabb) # [128, 128, 128]
-    nSamples = min(args.nSamples, cal_n_samples(reso_cur, args.step_ratio)) # 100x100x100 --> 443
+    reso_cur = N_to_reso(args.n_voxel_init, aabb) # [128, 128, 128]
+    n_samples = min(args.n_samples, cal_n_samples(reso_cur, args.step_ratio)) # 100x100x100 --> 443
 
-    if args.ckpt is not None:
-        ckpt = torch.load(args.ckpt, map_location=device)
-        kwargs = ckpt['kwargs']
-        kwargs.update({'device':device})
-        tensorf = eval(args.model_name)(**kwargs)
-        tensorf.load(ckpt)
-    else:
-        tensorf = eval(args.model_name)(aabb, reso_cur, device,
-                    density_n_comp=n_lamb_sigma, appearance_n_comp=n_lamb_sh, app_dim=args.data_dim_color, near_far=near_far,
-                    alphaMask_thres=args.alpha_mask_thre, distance_scale=args.distance_scale,
-                    view_pe=args.view_pe, feat_pe=args.feat_pe, featureC=args.featureC, step_ratio=args.step_ratio, feat2denseAct=args.feat2denseAct)
+    tensorf = TensorVMSplit(aabb, reso_cur, device,
+                dense_n_comp=dense_n_comp, 
+                color_n_comp=color_n_comp, 
+                color_data_dim=args.color_data_dim,
+                near_far=near_far,
+                view_pe=args.view_pe, feat_pe=args.feat_pe,
+                feature_dim=args.feature_dim,
+                step_ratio=args.step_ratio)
 
     # (Pdb) tensorf
     # TensorVMSplit(
-    #   (density_plane): ParameterList(
+    #   (dense_plane): ParameterList(
     #       (0): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
     #       (1): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
     #       (2): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
     #   )
-    #   (density_line): ParameterList(
+    #   (dense_line): ParameterList(
     #       (0): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x1 (GPU 0)]
     #       (1): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x1 (GPU 0)]
     #       (2): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x1 (GPU 0)]
     #   )
-    #   (app_plane): ParameterList(
+    #   (color_plane): ParameterList(
     #       (0): Parameter containing: [torch.cuda.FloatTensor of size 1x48x128x128 (GPU 0)]
     #       (1): Parameter containing: [torch.cuda.FloatTensor of size 1x48x128x128 (GPU 0)]
     #       (2): Parameter containing: [torch.cuda.FloatTensor of size 1x48x128x128 (GPU 0)]
     #   )
-    #   (app_line): ParameterList(
+    #   (color_line): ParameterList(
     #       (0): Parameter containing: [torch.cuda.FloatTensor of size 1x48x128x1 (GPU 0)]
     #       (1): Parameter containing: [torch.cuda.FloatTensor of size 1x48x128x1 (GPU 0)]
     #       (2): Parameter containing: [torch.cuda.FloatTensor of size 1x48x128x1 (GPU 0)]
@@ -192,12 +133,12 @@ def reconstruction(args):
 
     #linear in logrithmic space
     # args.upsample_list=[2000, 3000, 4000, 5500, 7000]
-    N_voxel_list = (torch.round(torch.exp(torch.linspace(np.log(args.N_voxel_init), \
-        np.log(args.N_voxel_final), len(args.upsample_list)+1))).long()).tolist()[1:]
+    N_voxel_list = (torch.round(torch.exp(torch.linspace(np.log(args.n_voxel_init), \
+        np.log(args.n_voxel_final), len(args.upsample_list)+1))).long()).tolist()[1:]
 
 
     torch.cuda.empty_cache()
-    PSNRs,PSNRs_test = [],[0]
+    PSNRs = []
 
     allrays, allrgbs = train_dataset.all_rays, train_dataset.all_rgbs
     allrays, allrgbs = tensorf.filtering_rays(allrays, allrgbs, bbox_only=True)
@@ -213,13 +154,13 @@ def reconstruction(args):
 
         #rgb_map, alphas_map, depth_map
         rgb_map = renderer(rays_train, tensorf, chunk=args.batch_size,
-                                N_samples=nSamples, white_bg = white_bg, device=device, is_train=True)
+                                N_samples=n_samples, white_bg = white_bg, device=device, is_train=True)
 
         loss = torch.mean((rgb_map - rgb_train) ** 2)
 
         # loss
         total_loss = loss
-        loss_reg_L1 = tensorf.density_L1()
+        loss_reg_L1 = tensorf.dense_L1()
         total_loss += L1_reg_weight*loss_reg_L1
 
         optimizer.zero_grad()
@@ -238,19 +179,14 @@ def reconstruction(args):
             pbar.set_description(
                 f'Iteration {iteration:05d}:'
                 + f' train_psnr = {float(np.mean(PSNRs)):.2f}'
-                + f' test_psnr = {float(np.mean(PSNRs_test)):.2f}'
                 + f' mse = {loss:.6f}'
             )
             PSNRs = []
 
-        if iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0:
-            PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
-                            prtx=f'{iteration:06d}_', N_samples=nSamples, white_bg = white_bg)
-
         if iteration in args.update_alphamask_list: # [2000, 4000]
             if reso_cur[0] * reso_cur[1] * reso_cur[2]<256**3:# update volume resolution
                 reso_mask = reso_cur
-            new_aabb = tensorf.updateAlphaMask(tuple(reso_mask))
+            new_aabb = tensorf.update_alpha_mask(tuple(reso_mask))
 
             if iteration == args.update_alphamask_list[0]:
                 tensorf.shrink(new_aabb)
@@ -265,7 +201,7 @@ def reconstruction(args):
         if iteration in args.upsample_list: # [2000, 3000, 4000, 5500, 7000]
             n_voxels = N_voxel_list.pop(0)
             reso_cur = N_to_reso(n_voxels, tensorf.aabb)
-            nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
+            n_samples = min(args.n_samples, cal_n_samples(reso_cur,args.step_ratio))
             tensorf.upsample_volume_grid(reso_cur)
 
             if args.lr_upsample_reset: # True
@@ -278,20 +214,9 @@ def reconstruction(args):
 
     tensorf.save(f'{logfolder}/{args.expname}.th')
 
-
-    if args.render_train:
-        os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
-        train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train)
-        PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, device=device)
-        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
-
     if args.render_test:
-        os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
-        PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_test_all/',
+        evaluation(test_dataset,tensorf, renderer, f'{logfolder}/{args.expname}/imgs_test_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, device=device)
-        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
-
 
 if __name__ == '__main__':
 
@@ -311,23 +236,15 @@ if __name__ == '__main__':
     #     lr_decay_ratio=0.1, 
     #     lr_upsample_reset=1, L1_weight_inital=8e-05, 
     #     L1_weight_rest=4e-05,  
-    #     n_lamb_sigma=[16, 16, 16], n_lamb_sh=[48, 48, 48], 
-    #     data_dim_color=27, 
-    #     alpha_mask_thre=0.0001, distance_scale=25, 
-    #     view_pe=2, feat_pe=2, featureC=128, 
+    #     color_data_dim=27, 
+    #     view_pe=2, feat_pe=2, feature_dim=128, 
     #     ckpt=None, render_only=0, render_test=1, 
     #     render_train=0, render_path=0, export_mesh=0, 
-    #     lindisp=False, perturb=1.0, accumulate_decay=0.998, 
-    #     feat2denseAct='softplus', nSamples=1000000.0, 
-    #     step_ratio=0.5, white_bkgd=False, N_voxel_init=2097156, 
-    #     N_voxel_final=16777216, upsample_list=[2000, 3000, 4000, 5500, 7000], 
+    #     accumulate_decay=0.998, 
+    #     n_samples=1000000.0, 
+    #     step_ratio=0.5, n_voxel_init=2097156, 
+    #     n_voxel_final=16777216, upsample_list=[2000, 3000, 4000, 5500, 7000], 
     #     update_alphamask_list=[2000, 4000], idx_view=0, N_vis=5, vis_every=10000)
 
-    if  args.export_mesh:
-        export_mesh(args)
-
-    if args.render_only and (args.render_test or args.render_path):
-        render_test(args)
-    else:
-        reconstruction(args)
+    do_train(args)
 

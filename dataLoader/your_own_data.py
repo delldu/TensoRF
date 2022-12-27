@@ -99,13 +99,6 @@ class YourOwnDataset(Dataset):
     def define_transforms(self):
         self.transform = T.ToTensor()
         
-    def define_proj_mat(self):
-        self.proj_mat = self.intrinsics.unsqueeze(0) @ torch.inverse(self.poses)[:,:3]
-
-    def world2ndc(self,points,lindisp=None):
-        device = points.device
-        return (points - self.center.to(device)) / self.radius.to(device)
-        
     def __len__(self):
         return len(self.all_rgbs)
 
