@@ -172,7 +172,6 @@ class TensorBase(torch.nn.Module):
             'appearance_n_comp': self.app_n_comp,
             'app_dim': self.app_dim,
 
-            'density_shift': self.density_shift,
             'alphaMask_thres': self.alphaMask_thres,
             'distance_scale': self.distance_scale,
             'rayMarch_weight_thres': self.rayMarch_weight_thres,
@@ -203,17 +202,16 @@ class TensorBase(torch.nn.Module):
             self.alphaMask = AlphaGridMask(self.device, ckpt['alphaMask.aabb'].to(self.device), alpha_volume.float().to(self.device))
         self.load_state_dict(ckpt['state_dict'])
 
+    # def sample_ray_ndc(self, rays_o, rays_d, is_train=True, N_samples=-1):
+    #     N_samples = N_samples if N_samples > 0 else self.nSamples
+    #     near, far = self.near_far
+    #     interpx = torch.linspace(near, far, N_samples).unsqueeze(0).to(rays_o)
+    #     if is_train:
+    #         interpx += torch.rand_like(interpx).to(rays_o) * ((far - near) / N_samples)
 
-    def sample_ray_ndc(self, rays_o, rays_d, is_train=True, N_samples=-1):
-        N_samples = N_samples if N_samples > 0 else self.nSamples
-        near, far = self.near_far
-        interpx = torch.linspace(near, far, N_samples).unsqueeze(0).to(rays_o)
-        if is_train:
-            interpx += torch.rand_like(interpx).to(rays_o) * ((far - near) / N_samples)
-
-        rays_pts = rays_o[..., None, :] + rays_d[..., None, :] * interpx[..., None]
-        mask_outbbox = ((self.aabb[0] > rays_pts) | (rays_pts > self.aabb[1])).any(dim=-1)
-        return rays_pts, interpx, ~mask_outbbox
+    #     rays_pts = rays_o[..., None, :] + rays_d[..., None, :] * interpx[..., None]
+    #     mask_outbbox = ((self.aabb[0] > rays_pts) | (rays_pts > self.aabb[1])).any(dim=-1)
+    #     return rays_pts, interpx, ~mask_outbbox
 
     def sample_ray(self, rays_o, rays_d, is_train=True, N_samples=-1):
         # is_train = True
@@ -350,8 +348,8 @@ class TensorBase(torch.nn.Module):
         if alpha_mask.any(): # True
             xyz_sampled = self.normalize_coord(xyz_locs[alpha_mask])
             sigma_feature = self.compute_densityfeature(xyz_sampled)
-            validsigma = self.feature2density(sigma_feature)
-            sigma[alpha_mask] = validsigma
+            valid_sigma = self.feature2density(sigma_feature)
+            sigma[alpha_mask] = valid_sigma
         
         alpha = 1 - torch.exp(-sigma*length).view(xyz_locs.shape[:-1])
         return alpha # alpha.size() -- [16384]
@@ -369,6 +367,9 @@ class TensorBase(torch.nn.Module):
             is_train=is_train,N_samples=N_samples)
         dists = torch.cat((z_vals[:, 1:] - z_vals[:, :-1], torch.zeros_like(z_vals[:, :1])), dim=-1)
         viewdirs = viewdirs.view(-1, 1, 3).expand(xyz_sampled.shape)
+
+        sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
+        rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
         
         if self.alphaMask is not None: # False
             alphas = self.alphaMask.sample_alpha(xyz_sampled[ray_valid])
@@ -377,15 +378,11 @@ class TensorBase(torch.nn.Module):
             ray_invalid[ray_valid] |= (~alpha_mask)
             ray_valid = ~ray_invalid
 
-        sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
-        rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
-
         if ray_valid.any(): # True ?
             xyz_sampled = self.normalize_coord(xyz_sampled)
             sigma_feature = self.compute_densityfeature(xyz_sampled[ray_valid])
-
-            validsigma = self.feature2density(sigma_feature)
-            sigma[ray_valid] = validsigma
+            valid_sigma = self.feature2density(sigma_feature)
+            sigma[ray_valid] = valid_sigma
 
         # dists.size() -- [4096, 443]
         alpha, weight = raw2alpha(sigma, dists * self.distance_scale)

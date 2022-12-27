@@ -4,51 +4,51 @@ from PIL import Image
 import torchvision.transforms as T
 import torch.nn.functional as F
 import scipy.signal
+import pdb
 
-mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
+# mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
 
+# def visualize_depth_numpy(depth, minmax=None, cmap=cv2.COLORMAP_JET):
+#     """
+#     depth: (H, W)
+#     """
 
-def visualize_depth_numpy(depth, minmax=None, cmap=cv2.COLORMAP_JET):
-    """
-    depth: (H, W)
-    """
+#     x = np.nan_to_num(depth) # change nan to 0
+#     if minmax is None:
+#         mi = np.min(x[x>0]) # get minimum positive depth (ignore background)
+#         ma = np.max(x)
+#     else:
+#         mi,ma = minmax
 
-    x = np.nan_to_num(depth) # change nan to 0
-    if minmax is None:
-        mi = np.min(x[x>0]) # get minimum positive depth (ignore background)
-        ma = np.max(x)
-    else:
-        mi,ma = minmax
+#     x = (x-mi)/(ma-mi+1e-8) # normalize to 0~1
+#     x = (255*x).astype(np.uint8)
+#     x_ = cv2.applyColorMap(x, cmap)
+#     return x_, [mi,ma]
 
-    x = (x-mi)/(ma-mi+1e-8) # normalize to 0~1
-    x = (255*x).astype(np.uint8)
-    x_ = cv2.applyColorMap(x, cmap)
-    return x_, [mi,ma]
+# def init_log(log, keys):
+#     for key in keys:
+#         log[key] = torch.tensor([0.0], dtype=float)
+#     return log
 
-def init_log(log, keys):
-    for key in keys:
-        log[key] = torch.tensor([0.0], dtype=float)
-    return log
+# def visualize_depth(depth, minmax=None, cmap=cv2.COLORMAP_JET):
+#     """
+#     depth: (H, W)
+#     """
+#     if type(depth) is not np.ndarray:
+#         depth = depth.cpu().numpy()
 
-def visualize_depth(depth, minmax=None, cmap=cv2.COLORMAP_JET):
-    """
-    depth: (H, W)
-    """
-    if type(depth) is not np.ndarray:
-        depth = depth.cpu().numpy()
+#     x = np.nan_to_num(depth) # change nan to 0
+#     if minmax is None:
+#         mi = np.min(x[x>0]) # get minimum positive depth (ignore background)
+#         ma = np.max(x)
+#     else:
+#         mi,ma = minmax
 
-    x = np.nan_to_num(depth) # change nan to 0
-    if minmax is None:
-        mi = np.min(x[x>0]) # get minimum positive depth (ignore background)
-        ma = np.max(x)
-    else:
-        mi,ma = minmax
-
-    x = (x-mi)/(ma-mi+1e-8) # normalize to 0~1
-    x = (255*x).astype(np.uint8)
-    x_ = Image.fromarray(cv2.applyColorMap(x, cmap))
-    x_ = T.ToTensor()(x_)  # (3, H, W)
-    return x_, [mi,ma]
+#     x = (x-mi)/(ma-mi+1e-8) # normalize to 0~1
+#     x = (255*x).astype(np.uint8)
+#     x_ = Image.fromarray(cv2.applyColorMap(x, cmap))
+#     x_ = T.ToTensor()(x_)  # (3, H, W)
+#     return x_, [mi,ma]
 
 def N_to_reso(n_voxels, bbox):
     xyz_min, xyz_max = bbox
@@ -75,11 +75,11 @@ def rgb_lpips(np_gt, np_im, net_name, device):
     return __LPIPS__[net_name](gt, im, normalize=True).item()
 
 
-def findItem(items, target):
-    for one in items:
-        if one[:len(target)]==target:
-            return one
-    return None
+# def findItem(items, target):
+#     for one in items:
+#         if one[:len(target)]==target:
+#             return one
+#     return None
 
 
 ''' Evaluation metrics (ssim, lpips)
@@ -133,27 +133,27 @@ def rgb_ssim(img0, img1, max_val,
     return ssim_map if return_map else ssim
 
 
-import torch.nn as nn
-class TVLoss(nn.Module):
-    def __init__(self,TVLoss_weight=1):
-        super(TVLoss,self).__init__()
-        self.TVLoss_weight = TVLoss_weight
+# import torch.nn as nn
+# class TVLoss(nn.Module):
+#     def __init__(self,TVLoss_weight=1):
+#         super(TVLoss,self).__init__()
+#         self.TVLoss_weight = TVLoss_weight
 
-    def forward(self,x):
-        batch_size = x.size()[0]
-        h_x = x.size()[2]
-        w_x = x.size()[3]
-        count_h = self._tensor_size(x[:,:,1:,:])
-        count_w = self._tensor_size(x[:,:,:,1:])
-        h_tv = torch.pow((x[:,:,1:,:]-x[:,:,:h_x-1,:]),2).sum()
-        w_tv = torch.pow((x[:,:,:,1:]-x[:,:,:,:w_x-1]),2).sum()
+#     def forward(self,x):
+#         batch_size = x.size()[0]
+#         h_x = x.size()[2]
+#         w_x = x.size()[3]
+#         count_h = self._tensor_size(x[:,:,1:,:])
+#         count_w = self._tensor_size(x[:,:,:,1:])
+#         h_tv = torch.pow((x[:,:,1:,:]-x[:,:,:h_x-1,:]),2).sum()
+#         w_tv = torch.pow((x[:,:,:,1:]-x[:,:,:,:w_x-1]),2).sum()
 
-        pdb.set_trace()
+#         pdb.set_trace()
 
-        return self.TVLoss_weight*2*(h_tv/count_h+w_tv/count_w)/batch_size
+#         return self.TVLoss_weight*2*(h_tv/count_h+w_tv/count_w)/batch_size
 
-    def _tensor_size(self,t):
-        return t.size()[1]*t.size()[2]*t.size()[3]
+#     def _tensor_size(self,t):
+#         return t.size()[1]*t.size()[2]*t.size()[3]
 
 
 
@@ -182,7 +182,10 @@ def convert_sdf_samples_to_ply(
     verts, faces, normals, values = skimage.measure.marching_cubes(
         numpy_3d_sdf_tensor, level=level, spacing=voxel_size
     )
-    pdb.set_trace()
+    # verts.shape -- (284621, 3)
+    # faces.shape -- (572646, 3)
+    # normals.shape -- (284621, 3)
+    # values.shape -- (284621,)
 
     faces = faces[...,::-1] # inverse face orientation
 
@@ -200,19 +203,14 @@ def convert_sdf_samples_to_ply(
     verts_tuple = np.zeros((num_verts,), dtype=[("x", "f4"), ("y", "f4"), ("z", "f4")])
     for i in range(0, num_verts):
         verts_tuple[i] = tuple(mesh_points[i, :])
-    pdb.set_trace()
-
 
     faces_building = []
     for i in range(0, num_faces):
         faces_building.append(((faces[i, :].tolist(),)))
     faces_tuple = np.array(faces_building, dtype=[("vertex_indices", "i4", (3,))])
-    pdb.set_trace()
 
     el_verts = plyfile.PlyElement.describe(verts_tuple, "vertex")
     el_faces = plyfile.PlyElement.describe(faces_tuple, "face")
-
-    pdb.set_trace()
 
     ply_data = plyfile.PlyData([el_verts, el_faces])
     print("saving mesh to %s" % (ply_filename_out))

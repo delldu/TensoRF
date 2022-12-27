@@ -211,8 +211,8 @@ def reconstruction(args):
         ray_idx = trainingSampler.nextids()
         rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device)
 
-        #rgb_map, alphas_map, depth_map, weights, uncertainty
-        rgb_map, depth_map = renderer(rays_train, tensorf, chunk=args.batch_size,
+        #rgb_map, alphas_map, depth_map
+        rgb_map = renderer(rays_train, tensorf, chunk=args.batch_size,
                                 N_samples=nSamples, white_bg = white_bg, device=device, is_train=True)
 
         loss = torch.mean((rgb_map - rgb_train) ** 2)
@@ -247,7 +247,7 @@ def reconstruction(args):
             PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
                             prtx=f'{iteration:06d}_', N_samples=nSamples, white_bg = white_bg)
 
-        if iteration in args.update_alphamask_list:
+        if iteration in args.update_alphamask_list: # [2000, 4000]
             if reso_cur[0] * reso_cur[1] * reso_cur[2]<256**3:# update volume resolution
                 reso_mask = reso_cur
             new_aabb = tensorf.updateAlphaMask(tuple(reso_mask))
@@ -262,7 +262,7 @@ def reconstruction(args):
                 allrays, allrgbs = tensorf.filtering_rays(allrays, allrgbs)
                 trainingSampler = SimpleSampler(allrgbs.shape[0], args.batch_size)
 
-        if iteration in args.upsample_list:
+        if iteration in args.upsample_list: # [2000, 3000, 4000, 5500, 7000]
             n_voxels = N_voxel_list.pop(0)
             reso_cur = N_to_reso(n_voxels, tensorf.aabb)
             nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
@@ -275,7 +275,6 @@ def reconstruction(args):
                 lr_scale = args.lr_decay_ratio ** (iteration / args.n_iters)
             grad_vars = tensorf.get_optparam_groups(args.lr_init*lr_scale, args.lr_basis*lr_scale)
             optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
-        
 
     tensorf.save(f'{logfolder}/{args.expname}.th')
 

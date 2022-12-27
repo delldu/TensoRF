@@ -17,7 +17,7 @@ def OctreeRender_trilinear_fast(rays, tensorf, chunk=4096, N_samples=-1, white_b
         rgbs.append(rgb_map)
         depth_maps.append(depth_map)
     
-    return torch.cat(rgbs), torch.cat(depth_maps)
+    return torch.cat(rgbs) # , torch.cat(depth_maps)
 
 @torch.no_grad()
 def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prtx='', N_samples=-1,
@@ -50,13 +50,16 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
 
         rays = samples.view(-1,samples.shape[-1])
 
-        rgb_map, depth_map = renderer(rays, tensorf, chunk=4096, N_samples=N_samples,
-                                        white_bg = white_bg, device=device)
+        # rgb_map, depth_map = renderer(rays, tensorf, chunk=4096, N_samples=N_samples,
+        #                                 white_bg = white_bg, device=device)
+        rgb_map = renderer(rays, tensorf, chunk=4096, N_samples=N_samples, 
+            white_bg = white_bg, device=device)
+
         rgb_map = rgb_map.clamp(0.0, 1.0)
+        # rgb_map, depth_map = rgb_map.reshape(H, W, 3).cpu(), depth_map.reshape(H, W).cpu()
+        rgb_map = rgb_map.reshape(H, W, 3).cpu()
 
-        rgb_map, depth_map = rgb_map.reshape(H, W, 3).cpu(), depth_map.reshape(H, W).cpu()
-
-        depth_map, _ = visualize_depth_numpy(depth_map.numpy(),near_far)
+        # depth_map, _ = visualize_depth_numpy(depth_map.numpy(),near_far)
         # test_dataset.all_rgbs.size() -- [200, 800, 800, 3]
 
         if len(test_dataset.all_rgbs):
