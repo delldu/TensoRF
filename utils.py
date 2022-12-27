@@ -147,6 +147,9 @@ class TVLoss(nn.Module):
         count_w = self._tensor_size(x[:,:,:,1:])
         h_tv = torch.pow((x[:,:,1:,:]-x[:,:,:h_x-1,:]),2).sum()
         w_tv = torch.pow((x[:,:,:,1:]-x[:,:,:,:w_x-1]),2).sum()
+
+        pdb.set_trace()
+
         return self.TVLoss_weight*2*(h_tv/count_h+w_tv/count_w)/batch_size
 
     def _tensor_size(self,t):
@@ -161,8 +164,6 @@ def convert_sdf_samples_to_ply(
     ply_filename_out,
     bbox,
     level=0.5,
-    offset=None,
-    scale=None,
 ):
     """
     Convert sdf samples to .ply
@@ -181,6 +182,8 @@ def convert_sdf_samples_to_ply(
     verts, faces, normals, values = skimage.measure.marching_cubes(
         numpy_3d_sdf_tensor, level=level, spacing=voxel_size
     )
+    pdb.set_trace()
+
     faces = faces[...,::-1] # inverse face orientation
 
     # transform from voxel coordinates to camera coordinates
@@ -190,29 +193,26 @@ def convert_sdf_samples_to_ply(
     mesh_points[:, 1] = bbox[0,1] + verts[:, 1]
     mesh_points[:, 2] = bbox[0,2] + verts[:, 2]
 
-    # apply additional offset and scale
-    if scale is not None:
-        mesh_points = mesh_points / scale
-    if offset is not None:
-        mesh_points = mesh_points - offset
-
     # try writing to the ply file
-
     num_verts = verts.shape[0]
     num_faces = faces.shape[0]
 
     verts_tuple = np.zeros((num_verts,), dtype=[("x", "f4"), ("y", "f4"), ("z", "f4")])
-
     for i in range(0, num_verts):
         verts_tuple[i] = tuple(mesh_points[i, :])
+    pdb.set_trace()
+
 
     faces_building = []
     for i in range(0, num_faces):
         faces_building.append(((faces[i, :].tolist(),)))
     faces_tuple = np.array(faces_building, dtype=[("vertex_indices", "i4", (3,))])
+    pdb.set_trace()
 
     el_verts = plyfile.PlyElement.describe(verts_tuple, "vertex")
     el_faces = plyfile.PlyElement.describe(faces_tuple, "face")
+
+    pdb.set_trace()
 
     ply_data = plyfile.PlyData([el_verts, el_faces])
     print("saving mesh to %s" % (ply_filename_out))

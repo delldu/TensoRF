@@ -94,9 +94,9 @@ if __name__ == '__main__':
     #           f'--N_voxel_init {128**3} --N_voxel_final {300**3} '\
     #           f'--N_vis {5}  ' \
     #           f'--n_lamb_sigma "[16,16,16]" --n_lamb_sh "[48,48,48]" ' \
-    #           f'--upsamp_list "[2000, 3000, 4000, 5500,7000]" --update_AlphaMask_list "[3000,4000]" ' \
-    #           f'--shadingMode MLP_Fea --fea2denseAct softplus  --view_pe {2} --fea_pe {2} ' \
-    #           f'--L1_weight_inital {8e-5} --L1_weight_rest {4e-5} --rm_weight_mask_thre {1e-4} --add_timestamp 0 ' \
+    #           f'--upsample_list "[2000, 3000, 4000, 5500,7000]" --update_alphamask_list "[3000,4000]" ' \
+    #           f'--feat2denseAct softplus  --view_pe {2} --feat_pe {2} ' \
+    #           f'--L1_weight_inital {8e-5} --L1_weight_rest {4e-5} ' \
     #           f'--render_test 1 '
     #     print(cmd)
     #     os.system(cmd)
@@ -106,13 +106,12 @@ if __name__ == '__main__':
     # datafolder = '/mnt/new_disk_2/anpei/Dataset/TeRF/Synthetic_NSVF/'
     # param_dict = {
     #             'data_name': ['Robot','Steamtrain','Bike','Lifestyle','Palace','Spaceship','Toad','Wineholder'],#'Bike','Lifestyle','Palace','Robot','Spaceship','Steamtrain','Toad','Wineholder'
-    #             'shadingMode': ['SH'],
     #             ('n_lamb_sigma', 'n_lamb_sh'): [ ("[8,8,8]", "[8,8,8]")],
-    #             ('view_pe', 'fea_pe', 'featureC','fea2denseAct','N_voxel_init') : [(2, 2, 128, 'softplus',128**3)],
-    #             ('L1_weight_inital', 'L1_weight_rest', 'rm_weight_mask_thre'):[(4e-5, 4e-5, 1e-4)],
+    #             ('view_pe', 'feat_pe', 'featureC','feat2denseAct','N_voxel_init') : [(2, 2, 128, 'softplus',128**3)],
+    #             ('L1_weight_inital', 'L1_weight_rest', 
     #             ('n_iters','N_voxel_final'): [(30000,300**3)],
     #             ('dataset_name','N_vis','render_test') : [("nsvf",5,1)],
-    #             ('upsamp_list','update_AlphaMask_list'): [("[2000,3000,4000,5500,7000]","[3000,4000]")]
+    #             ('upsample_list','update_alphamask_list'): [("[2000,3000,4000,5500,7000]","[3000,4000]")]
     #
     #     }
 
@@ -121,14 +120,12 @@ if __name__ == '__main__':
     # datafolder = '/mnt/new_disk_2/anpei/Dataset/TeRF/TanksAndTemple/'
     # param_dict = {
     #             'data_name': ['Truck','Barn','Caterpillar','Family','Ignatius'],
-    #             'shadingMode': ['MLP_Fea'],
     #             ('n_lamb_sigma', 'n_lamb_sh'): [("[16,16,16]", "[48,48,48]")],
-    #             ('view_pe', 'fea_pe','fea2denseAct','N_voxel_init','render_test') : [(2, 2, 'softplus',128**3,1)],
-    #             ('TV_weight_density','TV_weight_app'):[(0.1,0.01)],
-    #             # ('L1_weight_inital', 'L1_weight_rest', 'rm_weight_mask_thre'): [(4e-5, 4e-5, 1e-4)],
+    #             ('view_pe', 'feat_pe','feat2denseAct','N_voxel_init','render_test') : [(2, 2, 'softplus',128**3,1)],
+    #             # ('L1_weight_inital', 'L1_weight_rest', 
     #             ('n_iters','N_voxel_final'): [(15000,300**3)],
     #             ('dataset_name','N_vis') : [("tankstemple",5)],
-    #             ('upsamp_list','update_AlphaMask_list'): [("[2000,3000,4000,5500,7000]","[2000,4000]")]
+    #             ('upsample_list','update_alphamask_list'): [("[2000,3000,4000,5500,7000]","[2000,4000]")]
     #     }
 
     # llff
@@ -137,12 +134,11 @@ if __name__ == '__main__':
     # List = os.listdir(datafolder)
     # param_dict = {
     #             'data_name': List,
-    #             ('shadingMode', 'view_pe', 'fea_pe','fea2denseAct', 'nSamples','N_voxel_init') : [('MLP_Fea', 0, 0, 'relu',512,128**3)],
+    #             ('shadingMode', 'view_pe', 'feat_pe','feat2denseAct', 'nSamples','N_voxel_init') : [('MLP_Fea', 0, 0, 'relu',512,128**3)],
     #             ('n_lamb_sigma', 'n_lamb_sh') : [("[16,4,4]", "[48,12,12]")],
-    #             ('TV_weight_density', 'TV_weight_app'):[(1.0,1.0)],
     #             ('n_iters','N_voxel_final'): [(25000,640**3)],
     #             ('dataset_name','downsample_train','ndc_ray','N_vis','render_path') : [("llff",4.0, 1,-1,1)],
-    #             ('upsamp_list','update_AlphaMask_list'): [("[2000,3000,4000,5500,7000]","[2500]")],
+    #             ('upsample_list','update_alphamask_list'): [("[2000,3000,4000,5500,7000]","[2500]")],
     #     }
 
     # expFolder = "llff/"
@@ -150,11 +146,10 @@ if __name__ == '__main__':
     # param_dict = {
     #             'data_name': ['fern', 'flower', 'room', 'leaves', 'horns', 'trex', 'fortress', 'orchids'],#'fern', 'flower', 'room', 'leaves', 'horns', 'trex', 'fortress', 'orchids'
     #             ('n_lamb_sigma', 'n_lamb_sh'): [("[16,4,4]", "[48,12,12]")],
-    #             ('shadingMode', 'view_pe', 'fea_pe', 'featureC','fea2denseAct', 'nSamples','N_voxel_init') : [('MLP_Fea', 0, 0, 128, 'relu',512,128**3),('SH', 0, 0, 128, 'relu',512,128**3)],
-    #             ('TV_weight_density', 'TV_weight_app'):[(1.0,1.0)],
+    #             ('view_pe', 'feat_pe', 'featureC','feat2denseAct', 'nSamples','N_voxel_init') : [('MLP_Fea', 0, 0, 128, 'relu',512,128**3),('SH', 0, 0, 128, 'relu',512,128**3)],
     #             ('n_iters','N_voxel_final'): [(25000,640**3)],
-    #             ('dataset_name','downsample_train','ndc_ray','N_vis','render_test','render_path') : [("llff",4.0, 1,-1,1,1)],
-    #             ('upsamp_list','update_AlphaMask_list'): [("[2000,3000,4000,5500,7000]","[2500]")],
+    #             ('dataset_name','downsample_train','N_vis','render_test','render_path') : [("llff",4.0, 1,-1,1,1)],
+    #             ('upsample_list','update_alphamask_list'): [("[2000,3000,4000,5500,7000]","[2500]")],
     #     }
 
     #setting available gpus

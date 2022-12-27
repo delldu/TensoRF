@@ -32,9 +32,6 @@ class YourOwnDataset(Dataset):
         self.radius = (self.scene_bbox[1] - self.center).float().view(1, 1, 3)
         self.downsample=downsample
 
-    def read_depth(self, filename):
-        depth = np.array(read_pfm(filename)[0], dtype=np.float32)  # (800, 800)
-        return depth
     
     def read_meta(self):
 

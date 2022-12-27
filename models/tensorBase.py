@@ -7,34 +7,29 @@ import time
 import pdb
 
 def positional_encoding(positions, freqs):
-    
-        freq_bands = (2**torch.arange(freqs).float()).to(positions.device)  # (F,)
-        pts = (positions[..., None] * freq_bands).reshape(
-            positions.shape[:-1] + (freqs * positions.shape[-1], ))  # (..., DF)
-        pts = torch.cat([torch.sin(pts), torch.cos(pts)], dim=-1)
-        return pts
+    # positions.size() -- [9, 27]
+    # freqs -- 2
+
+    freq_bands = (2**torch.arange(freqs).float()).to(positions.device) # freq_bands.size() -- [2]
+    # positions[..., None].size() -- [9, 27, 1]
+    # positions.shape[:-1] + (freqs * positions.shape[-1], ) -- torch.Size([9, 54])
+    pts = (positions[..., None] * freq_bands).reshape(
+        positions.shape[:-1] + (freqs * positions.shape[-1], ))
+    pts = torch.cat([torch.sin(pts), torch.cos(pts)], dim=-1)
+
+    return pts # pts.size() -- [9, 108]
 
 def raw2alpha(sigma, dist):
     # sigma, dist  [N_rays, N_samples]
-    alpha = 1. - torch.exp(-sigma*dist)
+    # sigma.size() -- [4096, 443]
+    # dist.size() -- [4096, 443]
+    alpha = 1. - torch.exp(-sigma*dist) # alpha.size() -- [4096, 443]
+    ones = torch.ones(alpha.shape[0], 1).to(alpha.device) # ones.size() -- [4096, 1]
+    T = torch.cumprod(torch.cat([ones, 1. - alpha + 1e-10], -1), -1) # T.size() -- [4096, 444]
+    weights = alpha * T[:, :-1]  # T[:, :-1].size() -- [4096, 443]
 
-    T = torch.cumprod(torch.cat([torch.ones(alpha.shape[0], 1).to(alpha.device), 1. - alpha + 1e-10], -1), -1)
+    return alpha, weights # T[:,-1:] -- bg_weight
 
-    weights = alpha * T[:, :-1]  # [N_rays, N_samples]
-    return alpha, weights, T[:,-1:]
-
-
-def SHRender(xyz_sampled, viewdirs, features):
-    sh_mult = eval_sh_bases(2, viewdirs)[:, None]
-    rgb_sh = features.view(-1, 3, sh_mult.shape[-1])
-    rgb = torch.relu(torch.sum(sh_mult * rgb_sh, dim=-1) + 0.5)
-    return rgb
-
-
-def RGBRender(xyz_sampled, viewdirs, features):
-
-    rgb = features
-    return rgb
 
 class AlphaGridMask(torch.nn.Module):
     def __init__(self, device, aabb, alpha_volume):
@@ -52,17 +47,19 @@ class AlphaGridMask(torch.nn.Module):
         # self.gridSize -- tensor([128, 128, 128], device='cuda:0')
 
     def sample_alpha(self, xyz_sampled):
+        # xyz_sampled.size() -- [482223, 3]
         xyz_sampled = self.normalize_coord(xyz_sampled)
         alpha_vals = F.grid_sample(self.alpha_volume, xyz_sampled.view(1,-1,1,1,3), align_corners=True).view(-1)
-
+        # alpha_vals.size() -- [482223]
         return alpha_vals
 
     def normalize_coord(self, xyz_sampled):
-        return (xyz_sampled-self.aabb[0]) * self.invgridSize - 1
+        # self.invgridSize -- tensor([0.6667, 0.6667, 0.6667], device='cuda:0')
+        return (xyz_sampled - self.aabb[0]) * self.invgridSize - 1
 
 
 class MLPRender_Fea(torch.nn.Module):
-    def __init__(self,inChanel, viewpe=6, feape=6, featureC=128):
+    def __init__(self,inChanel, view_pe=6, feat_pe=6, featureC=128):
         super(MLPRender_Fea, self).__init__()
         # self = MLPRender_Fea(
         #   (mlp): Sequential(
@@ -74,78 +71,30 @@ class MLPRender_Fea(torch.nn.Module):
         #   )
         # )
         # inChanel = 27
-        # viewpe = 2
-        # feape = 2
+        # view_pe = 2
+        # feat_pe = 2
         # featureC = 128
 
-        self.in_mlpC = 2*viewpe*3 + 2*feape*inChanel + 3 + inChanel # 150
-        self.viewpe = viewpe
-        self.feape = feape
+        self.in_mlpC = (2*view_pe*3 + 2*feat_pe*inChanel) + 3 + inChanel # 150
+        self.view_pe = view_pe
+        self.feat_pe = feat_pe
         layer1 = torch.nn.Linear(self.in_mlpC, featureC)
         layer2 = torch.nn.Linear(featureC, featureC)
         layer3 = torch.nn.Linear(featureC,3)
 
-        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True), layer3)
+        self.mlp = torch.nn.Sequential(
+            layer1, torch.nn.ReLU(inplace=True),
+            layer2, torch.nn.ReLU(inplace=True),
+            layer3)
+
         torch.nn.init.constant_(self.mlp[-1].bias, 0)
 
     def forward(self, pts, viewdirs, features): # pts -- useless ??????
         indata = [features, viewdirs]
-        if self.feape > 0: # True
-            indata += [positional_encoding(features, self.feape)]
-        if self.viewpe > 0: # True
-            indata += [positional_encoding(viewdirs, self.viewpe)]
-        mlp_in = torch.cat(indata, dim=-1)
-        rgb = self.mlp(mlp_in)
-        rgb = torch.sigmoid(rgb)
-
-        return rgb
-
-class MLPRender_PE(torch.nn.Module):
-    def __init__(self,inChanel, viewpe=6, pospe=6, featureC=128):
-        super(MLPRender_PE, self).__init__()
-
-        self.in_mlpC = (3+2*viewpe*3)+ (3+2*pospe*3)  + inChanel #
-        self.viewpe = viewpe
-        self.pospe = pospe
-        layer1 = torch.nn.Linear(self.in_mlpC, featureC)
-        layer2 = torch.nn.Linear(featureC, featureC)
-        layer3 = torch.nn.Linear(featureC,3)
-
-        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True), layer3)
-        torch.nn.init.constant_(self.mlp[-1].bias, 0)
-        pdb.set_trace()
-
-    def forward(self, pts, viewdirs, features):
-        indata = [features, viewdirs]
-        if self.pospe > 0:
-            indata += [positional_encoding(pts, self.pospe)]
-        if self.viewpe > 0:
-            indata += [positional_encoding(viewdirs, self.viewpe)]
-        mlp_in = torch.cat(indata, dim=-1)
-        rgb = self.mlp(mlp_in)
-        rgb = torch.sigmoid(rgb)
-
-        return rgb
-
-class MLPRender(torch.nn.Module):
-    def __init__(self,inChanel, viewpe=6, featureC=128):
-        super(MLPRender, self).__init__()
-
-        self.in_mlpC = (3+2*viewpe*3) + inChanel
-        self.viewpe = viewpe
-        
-        layer1 = torch.nn.Linear(self.in_mlpC, featureC)
-        layer2 = torch.nn.Linear(featureC, featureC)
-        layer3 = torch.nn.Linear(featureC,3)
-
-        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True), layer3)
-        torch.nn.init.constant_(self.mlp[-1].bias, 0)
-        pdb.set_trace()
-
-    def forward(self, pts, viewdirs, features):
-        indata = [features, viewdirs]
-        if self.viewpe > 0:
-            indata += [positional_encoding(viewdirs, self.viewpe)]
+        if self.feat_pe > 0: # True
+            indata += [positional_encoding(features, self.feat_pe)]
+        if self.view_pe > 0: # True
+            indata += [positional_encoding(viewdirs, self.view_pe)]
         mlp_in = torch.cat(indata, dim=-1)
         rgb = self.mlp(mlp_in)
         rgb = torch.sigmoid(rgb)
@@ -153,11 +102,13 @@ class MLPRender(torch.nn.Module):
         return rgb
 
 class TensorBase(torch.nn.Module):
-    def __init__(self, aabb, gridSize, device, density_n_comp = [16, 16, 16], appearance_n_comp = [16, 16, 16], app_dim = 27,
-                    shadingMode = 'MLP_Fea', alphaMask = None, near_far=[2.0,6.0],
-                    density_shift = -10, alphaMask_thres=0.0001, distance_scale=25, rayMarch_weight_thres=0.0001,
-                    pos_pe = 6, view_pe = 2, fea_pe = 2, featureC=128, step_ratio=0.5,
-                    fea2denseAct = 'softplus'):
+    def __init__(self, aabb, gridSize, device, 
+                    density_n_comp = [16, 16, 16], 
+                    appearance_n_comp = [16, 16, 16], app_dim = 27,
+                    alphaMask = None, near_far=[2.0,6.0],
+                    alphaMask_thres=0.0001, distance_scale=25, rayMarch_weight_thres=0.0001,
+                    view_pe = 2, feat_pe = 2, featureC=128, step_ratio=0.5,
+                    feat2denseAct = 'softplus'):
         super(TensorBase, self).__init__()
         # self = TensorVMSplit()
         # aabb = tensor([[-1.5000, -1.5000, -1.5000],
@@ -172,11 +123,11 @@ class TensorBase(torch.nn.Module):
         self.alphaMask = alphaMask
         self.device=device
 
-        self.density_shift = density_shift
-        self.alphaMask_thres = alphaMask_thres
+        self.density_shift = -10.0 # shift density in softplus; making density = 0  when feature == 0
+        self.alphaMask_thres = alphaMask_thres # 0.0001
         self.distance_scale = distance_scale
         self.rayMarch_weight_thres = rayMarch_weight_thres
-        self.fea2denseAct = fea2denseAct
+        self.feat2denseAct = feat2denseAct
 
         self.near_far = near_far
         self.step_ratio = step_ratio
@@ -185,29 +136,14 @@ class TensorBase(torch.nn.Module):
 
         self.matMode = [[0,1], [0,2], [1,2]]
         self.vecMode =  [2, 1, 0]
-        self.comp_w = [1,1,1]
+        # self.comp_w = [1,1,1]
 
         self.init_svd_volume(gridSize[0], device)
 
-        self.shadingMode, self.pos_pe, self.view_pe, self.fea_pe, self.featureC = shadingMode, pos_pe, view_pe, fea_pe, featureC
-        self.init_render_func(shadingMode, pos_pe, view_pe, fea_pe, featureC, device)
+        self.view_pe, self.feat_pe, self.featureC = view_pe, feat_pe, featureC
+        self.renderModule = MLPRender_Fea(self.app_dim, view_pe, feat_pe, featureC).to(device)
 
-    def init_render_func(self, shadingMode, pos_pe, view_pe, fea_pe, featureC, device):
-        if shadingMode == 'MLP_PE':
-            self.renderModule = MLPRender_PE(self.app_dim, view_pe, pos_pe, featureC).to(device)
-        elif shadingMode == 'MLP_Fea': # True
-            self.renderModule = MLPRender_Fea(self.app_dim, view_pe, fea_pe, featureC).to(device)
-        elif shadingMode == 'MLP':
-            self.renderModule = MLPRender(self.app_dim, view_pe, featureC).to(device)
-        elif shadingMode == 'SH':
-            self.renderModule = SHRender
-        elif shadingMode == 'RGB':
-            assert self.app_dim == 3
-            self.renderModule = RGBRender
-        else:
-            print("Unrecognized shading module")
-            exit()
-        print("pos_pe", pos_pe, "view_pe", view_pe, "fea_pe", fea_pe)
+        print("view_pe", view_pe, "feat_pe", feat_pe)
         print(self.renderModule)
 
     def update_stepSize(self, gridSize):
@@ -218,28 +154,15 @@ class TensorBase(torch.nn.Module):
         self.gridSize= torch.LongTensor(gridSize).to(self.device)
         self.units = self.aabbSize / (self.gridSize-1)
         self.stepSize=torch.mean(self.units)*self.step_ratio
-        self.aabbDiag = torch.sqrt(torch.sum(torch.square(self.aabbSize)))
-        self.nSamples = int((self.aabbDiag / self.stepSize).item()) + 1
+
+        aabbDiag = torch.sqrt(torch.sum(torch.square(self.aabbSize)))
+        self.nSamples = int((aabbDiag / self.stepSize).item()) + 1
+
         print("sampling step size: ", self.stepSize)
         print("sampling number: ", self.nSamples)
 
-    def init_svd_volume(self, res, device):
-        pass
-
-    def compute_features(self, xyz_sampled):
-        pass
-    
-    def compute_densityfeature(self, xyz_sampled):
-        pass
-    
-    def compute_appfeature(self, xyz_sampled):
-        pass
-    
     def normalize_coord(self, xyz_sampled):
         return (xyz_sampled-self.aabb[0]) * self.invaabbSize - 1
-
-    def get_optparam_groups(self, lr_init_spatial = 0.02, lr_init_network = 0.001):
-        pass
 
     def get_kwargs(self):
         return {
@@ -253,15 +176,13 @@ class TensorBase(torch.nn.Module):
             'alphaMask_thres': self.alphaMask_thres,
             'distance_scale': self.distance_scale,
             'rayMarch_weight_thres': self.rayMarch_weight_thres,
-            'fea2denseAct': self.fea2denseAct,
+            'feat2denseAct': self.feat2denseAct,
 
             'near_far': self.near_far,
             'step_ratio': self.step_ratio,
 
-            'shadingMode': self.shadingMode,
-            'pos_pe': self.pos_pe,
             'view_pe': self.view_pe,
-            'fea_pe': self.fea_pe,
+            'feat_pe': self.feat_pe,
             'featureC': self.featureC
         }
 
@@ -314,16 +235,15 @@ class TensorBase(torch.nn.Module):
         interpx = (t_min[...,None] + step)
 
         rays_pts = rays_o[...,None,:] + rays_d[...,None,:] * interpx[...,None]
-        mask_outbbox = ((self.aabb[0]>rays_pts) | (rays_pts>self.aabb[1])).any(dim=-1)
+        mask_outbbox = ((self.aabb[0] > rays_pts) | (rays_pts>self.aabb[1])).any(dim=-1)
 
         # rays_pts.size() -- [4096, 443, 3]
         # interpx.size() -- [4096, 443]
         # mask_outbbox.size() -- [4096, 443]
         return rays_pts, interpx, ~mask_outbbox
 
-
-    def shrink(self, new_aabb, voxel_size):
-        pass
+    # def shrink(self, new_aabb, voxel_size):
+    #     pass
 
     @torch.no_grad()
     def getDenseAlpha(self,gridSize=None):
@@ -337,8 +257,6 @@ class TensorBase(torch.nn.Module):
         ), -1).to(self.device)
         dense_xyz = self.aabb[0] * (1-samples) + self.aabb[1] * samples
 
-        # dense_xyz = dense_xyz
-        # print(self.stepSize, self.distance_scale*self.aabbDiag)
         alpha = torch.zeros_like(dense_xyz[...,0])
         for i in range(gridSize[0]):
             alpha[i] = self.compute_alpha(dense_xyz[i].view(-1,3), self.stepSize).view((gridSize[1], gridSize[2]))
@@ -412,9 +330,9 @@ class TensorBase(torch.nn.Module):
 
     def feature2density(self, density_features):
         # density_features.size() -- [985197]
-        if self.fea2denseAct == "softplus": # True
+        if self.feat2denseAct == "softplus": # True
             return F.softplus(density_features + self.density_shift) # self.density_shift == -10
-        elif self.fea2denseAct == "relu":
+        elif self.feat2denseAct == "relu":
             return F.relu(density_features)
 
     def compute_alpha(self, xyz_locs, length=1):
@@ -439,24 +357,17 @@ class TensorBase(torch.nn.Module):
         return alpha # alpha.size() -- [16384]
 
 
-    def forward(self, rays_chunk, white_bg=True, is_train=False, ndc_ray=False, N_samples=-1):
+    def forward(self, rays_chunk, white_bg=True, is_train=False, N_samples=-1):
         # rays_chunk.size() -- [4096, 6]
         # white_bg = True
         # is_train = True
-        # ndc_ray = 0
         # N_samples = 443
 
         # sample points
         viewdirs = rays_chunk[:, 3:6]
-        if ndc_ray: # False
-            xyz_sampled, z_vals, ray_valid = self.sample_ray_ndc(rays_chunk[:, :3], viewdirs, is_train=is_train,N_samples=N_samples)
-            dists = torch.cat((z_vals[:, 1:] - z_vals[:, :-1], torch.zeros_like(z_vals[:, :1])), dim=-1)
-            rays_norm = torch.norm(viewdirs, dim=-1, keepdim=True)
-            dists = dists * rays_norm
-            viewdirs = viewdirs / rays_norm
-        else:
-            xyz_sampled, z_vals, ray_valid = self.sample_ray(rays_chunk[:, :3], viewdirs, is_train=is_train,N_samples=N_samples)
-            dists = torch.cat((z_vals[:, 1:] - z_vals[:, :-1], torch.zeros_like(z_vals[:, :1])), dim=-1)
+        xyz_sampled, z_vals, ray_valid = self.sample_ray(rays_chunk[:, :3], viewdirs, 
+            is_train=is_train,N_samples=N_samples)
+        dists = torch.cat((z_vals[:, 1:] - z_vals[:, :-1], torch.zeros_like(z_vals[:, :1])), dim=-1)
         viewdirs = viewdirs.view(-1, 1, 3).expand(xyz_sampled.shape)
         
         if self.alphaMask is not None: # False
@@ -477,10 +388,9 @@ class TensorBase(torch.nn.Module):
             sigma[ray_valid] = validsigma
 
         # dists.size() -- [4096, 443]
-        alpha, weight, bg_weight = raw2alpha(sigma, dists * self.distance_scale)
+        alpha, weight = raw2alpha(sigma, dists * self.distance_scale)
 
         app_mask = weight > self.rayMarch_weight_thres # self.rayMarch_weight_thres -- 0.0001
-
         if app_mask.any(): # False
             app_features = self.compute_appfeature(xyz_sampled[app_mask])
             valid_rgbs = self.renderModule(xyz_sampled[app_mask], viewdirs[app_mask], app_features)
