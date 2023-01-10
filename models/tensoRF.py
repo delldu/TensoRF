@@ -31,7 +31,7 @@ def raw2alpha(sigma, dist):
     return alpha, weights # T[:,-1:] -- bg_weight
 
 
-class AlphaGridMask(torch.nn.Module):
+class AlphaGridMask(nn.Module):
     def __init__(self, device, aabb, alpha_volume):
         super(AlphaGridMask, self).__init__()
         # (Pdb) aabb
@@ -58,7 +58,7 @@ class AlphaGridMask(torch.nn.Module):
         return (xyz_sampled - self.aabb[0]) * self.invgridSize - 1
 
 
-class MLPRender_Fea(torch.nn.Module):
+class MLPRender_Fea(nn.Module):
     def __init__(self,inChanel, view_pe=6, feat_pe=6, feature_dim=128):
         super(MLPRender_Fea, self).__init__()
         # self = MLPRender_Fea(
@@ -89,12 +89,12 @@ class MLPRender_Fea(torch.nn.Module):
 
         torch.nn.init.constant_(self.mlp[-1].bias, 0)
 
-    def forward(self, viewdirs, features):
-        indata = [features, viewdirs]
+    def forward(self, rays_d, features):
+        indata = [features, rays_d]
         if self.feat_pe > 0: # True
             indata += [positional_encoding(features, self.feat_pe)]
         if self.view_pe > 0: # True
-            indata += [positional_encoding(viewdirs, self.view_pe)]
+            indata += [positional_encoding(rays_d, self.view_pe)]
         mlp_in = torch.cat(indata, dim=-1)
         rgb = self.mlp(mlp_in)
         rgb = torch.sigmoid(rgb)
@@ -140,6 +140,7 @@ class TensorVMSplit(nn.Module):
 
         self.view_pe, self.feat_pe, self.feature_dim = view_pe, feat_pe, feature_dim
         self.render_model = MLPRender_Fea(self.color_data_dim, view_pe, feat_pe, feature_dim).to(device)
+        self.alphaMask = None
 
         print("view_pe", view_pe, "feat_pe", feat_pe)
         print(self.render_model)
@@ -237,21 +238,28 @@ class TensorVMSplit(nn.Module):
         vec = torch.where(rays_d==0, torch.full_like(rays_d, 1e-6), rays_d)
         rate_a = (self.aabb[1] - rays_o) / vec
         rate_b = (self.aabb[0] - rays_o) / vec
-        t_min = torch.minimum(rate_a, rate_b).amax(-1).clamp(min=near, max=far)
+        t_min = torch.minimum(rate_a, rate_b).amax(-1).clamp(min=near, max=far) # size() -- [4096]
 
         rng = torch.arange(N_samples)[None].float()
         if is_train:
             rng = rng.repeat(rays_d.shape[-2], 1) # rays_d.shape[-2] -- 4096
             rng += torch.rand_like(rng[:, [0]]) # torch.rand_like(rng[:, [0]]) -- [[0.0327]]
+        #self.step_size -- tensor(0.0118, device='cuda:0')
+        # rng -- tensor([[    0.0327,     1.0327,     2.0327,  ...,   440.0327,   441.0327,
+        #    442.0327],
+        # [    0.7392,     1.7392,     2.7392,  ...,   440.7392,   441.7392,
+        #    442.7392]])
         step = self.step_size * rng.to(rays_o.device)
-        interpx = (t_min[..., None] + step)
-
+        interpx = (t_min[..., None] + step) # interpx.size() -- [4096, 443]
+        # (Pdb) rays_o.size() -- [4096, 3]
+        # (Pdb) rays_o[...,None, :].size() -- [4096, 1, 3]
         rays_points = rays_o[...,None, :] + rays_d[...,None,:] * interpx[..., None]
         mask_outbbox = ((self.aabb[0] > rays_points) | (rays_points>self.aabb[1])).any(dim=-1)
 
         # rays_points.size() -- [4096, 443, 3]
         # interpx.size() -- [4096, 443]
         # mask_outbbox.size() -- [4096, 443]
+
         return rays_points, interpx, ~mask_outbbox
 
     @torch.no_grad()
@@ -304,7 +312,7 @@ class TensorVMSplit(nn.Module):
         return new_aabb
 
     @torch.no_grad()
-    def filtering_rays(self, all_rays, all_rgbs, N_samples=256, chunk=10240*5, bbox_only=False):
+    def filtering_rays(self, all_rays, all_rgbs, N_samples=256, chunk=10240*5):
         # N_samples = 256
         # chunk = 51200
         # bbox_only = True
@@ -319,17 +327,12 @@ class TensorVMSplit(nn.Module):
             rays_chunk = all_rays[idx_chunk].to(self.device)
 
             rays_o, rays_d = rays_chunk[..., :3], rays_chunk[..., 3:6]
-            if bbox_only:
-                vec = torch.where(rays_d == 0, torch.full_like(rays_d, 1e-6), rays_d)
-                rate_a = (self.aabb[1] - rays_o) / vec
-                rate_b = (self.aabb[0] - rays_o) / vec
-                t_min = torch.minimum(rate_a, rate_b).amax(-1) #.clamp(min=near, max=far)
-                t_max = torch.maximum(rate_a, rate_b).amin(-1) #.clamp(min=near, max=far)
-                mask_inbbox = t_max > t_min
-            else:
-                xyz_sampled, _,_ = self.sample_ray(rays_o, rays_d, N_samples=N_samples, is_train=False)
-                mask_inbbox= (self.alpha_mask.sample_alpha(xyz_sampled).view(xyz_sampled.shape[:-1]) > 0).any(-1)
-
+            vec = torch.where(rays_d == 0, torch.full_like(rays_d, 1e-6), rays_d)
+            rate_a = (self.aabb[1] - rays_o) / vec
+            rate_b = (self.aabb[0] - rays_o) / vec
+            t_min = torch.minimum(rate_a, rate_b).amax(-1) #.clamp(min=near, max=far)
+            t_max = torch.maximum(rate_a, rate_b).amin(-1) #.clamp(min=near, max=far)
+            mask_inbbox = t_max > t_min
             mask_filtered.append(mask_inbbox.cpu())
 
         mask_filtered = torch.cat(mask_filtered).view(all_rgbs.shape[:-1])
@@ -363,34 +366,23 @@ class TensorVMSplit(nn.Module):
         alpha = 1.0 - torch.exp(-sigma*length).view(xyz_locs.shape[:-1])
         return alpha # alpha.size() -- [16384]
 
-
     def forward(self, rays_chunk, white_bg=True, is_train=False, N_samples=-1):
-        # rays_chunk.size() -- [4096, 6]
-        # white_bg = True
-        # is_train = True
-        # N_samples = 443
-
         # sample points
-        view_o = rays_chunk[:, 0:3]
-        view_d = rays_chunk[:, 3:6]
-        xyz_sampled, z_vals, ray_valid = self.sample_ray(view_o, view_d, 
-            is_train=is_train, N_samples=N_samples)
-        # z_vals.size() -- [4096, 443]
+        rays_o = rays_chunk[:, 0:3]
+        rays_d = rays_chunk[:, 3:6]
+        xyz_sampled, z_vals, ray_valid = self.sample_ray(rays_o, rays_d, is_train=is_train,N_samples=N_samples)
         dists = torch.cat((z_vals[:, 1:] - z_vals[:, :-1], torch.zeros_like(z_vals[:, :1])), dim=-1)
-        # dists.size() -- [4096, 443]
-        view_d = view_d.view(-1, 1, 3).expand(xyz_sampled.shape)
-
-        # xyz_sampled.shape[:-1] -- [4096, 443]
-        sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
-        rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
-        # xyz_sampled.shape[:2] -- [4096, 443]
-
-        if self.alpha_mask is not None: # False
-            alphas = self.alpha_mask.sample_alpha(xyz_sampled[ray_valid])
+        rays_d = rays_d.view(-1, 1, 3).expand(xyz_sampled.shape)
+        
+        if self.alphaMask is not None:
+            alphas = self.alphaMask.sample_alpha(xyz_sampled[ray_valid])
             alpha_mask = alphas > 0
             ray_invalid = ~ray_valid
             ray_invalid[ray_valid] |= (~alpha_mask)
             ray_valid = ~ray_invalid
+
+        sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
+        rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
 
         if ray_valid.any(): # True ?
             xyz_sampled = self.normalize_coord(xyz_sampled)
@@ -398,22 +390,35 @@ class TensorVMSplit(nn.Module):
             valid_sigma = self.feature2dense(sigma_feature)
             sigma[ray_valid] = valid_sigma
 
-        # dists.size() -- [4096, 443], delta -- gradient ?
+        if ray_valid.any():
+            xyz_sampled = self.normalize_coord(xyz_sampled)
+            sigma_feature = self.dense2feature(xyz_sampled[ray_valid])
+
+            validsigma = self.feature2dense(sigma_feature)
+            sigma[ray_valid] = validsigma
+
+
         alpha, weight = raw2alpha(sigma, dists * self.distance_scale)
 
-        color_mask = weight > self.march_weight_threshold # self.march_weight_threshold -- 0.0001
-        if color_mask.any(): # False
+        color_mask = weight > self.march_weight_threshold
+
+        if color_mask.any():
             color_features = self.color2feature(xyz_sampled[color_mask])
-            valid_rgbs = self.render_model(view_d[color_mask], color_features)
+            valid_rgbs = self.render_model(rays_d[color_mask], color_features)
             rgb[color_mask] = valid_rgbs
 
         acc_map = torch.sum(weight, -1)
         rgb_map = torch.sum(weight[..., None] * rgb, -2)
 
-        if white_bg or (is_train and torch.rand((1,)) < 0.5):
+        if white_bg or (is_train and torch.rand((1,))<0.5):
             rgb_map = rgb_map + (1. - acc_map[..., None])
         
-        return rgb_map.clamp(0,1)
+        rgb_map = rgb_map.clamp(0.0, 1.0)
+        with torch.no_grad():
+            depth_map = torch.sum(weight * z_vals, -1)
+            depth_map = depth_map + (1. - acc_map) * rays_chunk[..., -1]
+
+        return rgb_map, depth_map # rgb, sigma, alpha, weight, bg_weight
 
     def get_optparam_groups(self, lr_init_spatialxyz = 0.02, lr_init_network = 0.001):
         # what's app ?
@@ -422,7 +427,7 @@ class TensorVMSplit(nn.Module):
                      {'params': self.color_line, 'lr': lr_init_spatialxyz}, 
                      {'params': self.color_plane, 'lr': lr_init_spatialxyz},
                      {'params': self.basis_mat.parameters(), 'lr':lr_init_network}]
-        if isinstance(self.render_model, torch.nn.Module):
+        if isinstance(self.render_model, nn.Module):
             grad_vars += [{'params':self.render_model.parameters(), 'lr':lr_init_network}]
         return grad_vars
 

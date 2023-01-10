@@ -52,7 +52,7 @@ class BlenderDataset(Dataset):
         # ray directions for all pixels, same for all images (same H, W, focal)
         self.directions = get_ray_directions(h, w, [self.focal, self.focal])  # (h, w, 3)
         self.directions = self.directions / torch.norm(self.directions, dim=-1, keepdim=True)
-        self.intrinsics = torch.tensor([[self.focal,0,w/2],[0,self.focal,h/2],[0,0,1]]).float()
+        self.intrinsics = torch.tensor([[self.focal, 0, w/2],[0, self.focal, h/2], [0, 0, 1]]).float()
         # (Pdb) self.intrinsics
         # tensor([[ 1111.1111,     0.0000,   400.0000],
         #         [    0.0000,  1111.1111,   400.0000],

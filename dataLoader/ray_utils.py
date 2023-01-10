@@ -19,7 +19,7 @@ def get_ray_directions(H, W, focal, center=None):
 
     # H = 800
     # W = 800
-    # focal = [1111.1110311937682, 1111.1110311937682]
+    # focal = [1111.1110, 1111.1110]
     # center = None
 
     grid = create_meshgrid(H, W, normalized_coordinates=False)[0] + 0.5
@@ -32,15 +32,16 @@ def get_ray_directions(H, W, focal, center=None):
     # see https://github.com/bmild/nerf/issues/24
     cent = center if center is not None else [W / 2, H / 2]
     directions = torch.stack([(i - cent[0]) / focal[0], (j - cent[1]) / focal[1], torch.ones_like(i)], -1)  # (H, W, 3)
-
+    # (Pdb) pp directions[0,0] -- [-0.3595, -0.3595,  1.0000]
+    # (Pdb) pp directions[799,799] -- [0.3595, 0.3595, 1.0000]
+    # (Pdb) pp directions[400,400] -- [0.0005, 0.0005, 1.0000]
     return directions
 
 
 def get_ray_directions_blender(H, W, focal, center=None):
     """
     Get ray directions for all pixels in camera coordinate.
-    Reference: https://www.scratchapixel.com/lessons/3d-basic-rendering/
-               ray-tracing-generating-camera-rays/standard-coordinate-systems
+    Reference: https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/standard-coordinate-systems
     Inputs:
         H, W, focal: image height, width and focal length
     Outputs:
@@ -78,6 +79,11 @@ def get_rays(directions, c2w):
     rays_d = rays_d.view(-1, 3)
     rays_o = rays_o.view(-1, 3)
 
+    # (Pdb) c2w
+    # tensor([[    -0.9999,     -0.0042,      0.0133,     -0.0538],
+    #         [    -0.0140,      0.2997,     -0.9539,      3.8455],
+    #         [    -0.0000,     -0.9540,     -0.2997,      1.2081],
+    #         [     0.0000,      0.0000,      0.0000,      1.0000]])
     return rays_o, rays_d
 
 

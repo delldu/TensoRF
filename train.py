@@ -141,7 +141,7 @@ def do_train(args):
     PSNRs = []
 
     allrays, allrgbs = train_dataset.all_rays, train_dataset.all_rgbs
-    allrays, allrgbs = tensorf.filtering_rays(allrays, allrgbs, bbox_only=True)
+    allrays, allrgbs = tensorf.filtering_rays(allrays, allrgbs)
     trainingSampler = SimpleSampler(allrays.shape[0], args.batch_size)
     
     L1_reg_weight = args.L1_weight_inital
@@ -153,7 +153,7 @@ def do_train(args):
         rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device)
 
         #rgb_map, alphas_map, depth_map
-        rgb_map = renderer(rays_train, tensorf, chunk=args.batch_size,
+        rgb_map, depth_map = renderer(rays_train, tensorf, chunk=args.batch_size,
                                 N_samples=n_samples, white_bg = white_bg, device=device, is_train=True)
 
         loss = torch.mean((rgb_map - rgb_train) ** 2)
@@ -213,6 +213,8 @@ def do_train(args):
             optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
 
     tensorf.save(f'{logfolder}/{args.expname}.th')
+
+    # save point cloud file
 
     if args.render_test:
         evaluation(test_dataset,tensorf, renderer, f'{logfolder}/{args.expname}/imgs_test_all/',
