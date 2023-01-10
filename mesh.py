@@ -66,6 +66,10 @@ def save_input_points(args, tensorf):
     select_index = select_index[0:size]
     allrays = allrays[select_index]
     allrgbs = allrgbs[select_index]
+
+    # allrays = allrays[0:size]
+    # allrgbs = allrgbs[0:size]
+
     rays_o, rays_d = allrays[:, 0:3], allrays[:, 3:6]
 
     aabb = torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]])
@@ -77,8 +81,6 @@ def save_input_points(args, tensorf):
             allrays.cpu(),
             tensorf,
             chunk=args.batch_size,
-            N_samples=n_samples,
-            white_bg=True,
             device=device,
             is_train=False,
         )
@@ -87,22 +89,24 @@ def save_input_points(args, tensorf):
 
     mask = torch.all(torch.cat([pc > aabb[0], pc < aabb[1]], dim=-1), dim=-1)
     pc = pc[mask]
-    rgb_map = rgb_map[mask].cpu()
+    rgb_map = rgb_map[mask]
 
-    save_points(pc, rgb_map, filename)
+    save_points(pc, rgb_map.cpu(), filename)
 
 
 @torch.no_grad()
 def export_mesh(args):
     ckpt = torch.load(args.ckpt, map_location=device)
-    kwargs = ckpt["kwargs"]
-    kwargs.update({"device": device})
-    # del kwargs["alpha_mask_threshold"]
-    # del kwargs["distance_scale"]
-    # del kwargs["march_weight_threshold"]
+    aabb = torch.tensor([[-1.5000, -1.5000, -1.5000],
+            [1.5000,  1.5000,  1.5000]], device=device)
+    grid_size = [128, 128, 128]
+    tensorf = TensorVMSplit(
+        aabb,
+        grid_size,
+        device,
+    )
 
-    tensorf = TensorVMSplit(**kwargs)
-    tensorf.load(ckpt)
+    tensorf.load_state_dict(ckpt)
 
     alpha, dense_xyz = tensorf.get_dense_alpha()
     # alpha.size() -- [115, 205, 133]

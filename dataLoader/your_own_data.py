@@ -25,7 +25,6 @@ class YourOwnDataset(Dataset):
         self.read_meta()
         self.define_proj_mat()
 
-        self.white_bg = True
         self.near_far = [0.1, 100.0]
 
         self.center = torch.mean(self.scene_bbox, axis=0).float().view(1, 1, 3)

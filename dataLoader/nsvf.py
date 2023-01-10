@@ -37,7 +37,6 @@ class NSVF(Dataset):
         self.img_wh = (int(wh[0] / downsample), int(wh[1] / downsample))
         self.define_transforms()
 
-        self.white_bg = True
         self.near_far = [0.5, 6.0]
         self.scene_bbox = torch.from_numpy(np.loadtxt(f"{self.root_dir}/bbox.txt")).float()[:6].view(2, 3)
         self.blender2opencv = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])

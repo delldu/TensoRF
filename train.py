@@ -6,7 +6,6 @@ import torch
 
 from tqdm.auto import tqdm
 
-# import json, random
 from renderer import *
 from utils import *
 
@@ -41,37 +40,23 @@ def do_train(args):
     # init dataset
     train_dataset = BlenderDataset(args.datadir, split="train", downsample=args.downsample_train, is_stack=False)
     test_dataset = BlenderDataset(args.datadir, split="test", downsample=args.downsample_train, is_stack=True)
-    white_bg = train_dataset.white_bg
-    near_far = train_dataset.near_far
 
     # init resolution
-    dense_n_comp = args.dense_n_comp
-    color_n_comp = args.color_n_comp
     logfolder = f"{args.basedir}/{args.expname}"
 
     # init log file
     os.makedirs(logfolder, exist_ok=True)
-    # os.makedirs(f'{logfolder}/imgs_vis', exist_ok=True)
-    # os.makedirs(f'{logfolder}/imgs_rgba', exist_ok=True)
-    # os.makedirs(f'{logfolder}/rgba', exist_ok=True)
 
     # init parameters
     aabb = train_dataset.scene_bbox.to(device)
-    reso_cur = N_to_reso(args.n_voxel_init, aabb)  # [128, 128, 128]
-    n_samples = min(args.n_samples, cal_n_samples(reso_cur, args.step_ratio))  # 100x100x100 --> 443
+    grid_size = N_to_reso(args.n_voxel_init, aabb)  # [128, 128, 128]
+    near_far = train_dataset.near_far
 
     tensorf = TensorVMSplit(
         aabb,
-        reso_cur,
+        grid_size,
         device,
-        dense_n_comp=dense_n_comp,
-        color_n_comp=color_n_comp,
-        color_data_dim=args.color_data_dim,
         near_far=near_far,
-        view_pe=args.view_pe,
-        feat_pe=args.feat_pe,
-        feature_dim=args.feature_dim,
-        step_ratio=args.step_ratio,
     )
 
     # (Pdb) tensorf
@@ -137,16 +122,6 @@ def do_train(args):
 
     optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
 
-    # linear in logrithmic space
-    # args.upsample_list=[2000, 3000, 4000, 5500, 7000]
-    N_voxel_list = (
-        torch.round(
-            torch.exp(
-                torch.linspace(np.log(args.n_voxel_init), np.log(args.n_voxel_final), len(args.upsample_list) + 1)
-            )
-        ).long()
-    ).tolist()[1:]
-
     torch.cuda.empty_cache()
     PSNRs = []
 
@@ -167,8 +142,6 @@ def do_train(args):
             rays_train,
             tensorf,
             chunk=args.batch_size,
-            N_samples=n_samples,
-            white_bg=white_bg,
             device=device,
             is_train=True,
         )
@@ -187,7 +160,6 @@ def do_train(args):
         loss = loss.detach().item()
 
         PSNRs.append(-10.0 * np.log(loss) / np.log(10.0))
-
         for param_group in optimizer.param_groups:
             param_group["lr"] = param_group["lr"] * lr_factor
 
@@ -196,38 +168,8 @@ def do_train(args):
             pbar.set_description(
                 f"Iteration {iteration:05d}:" + f" train_psnr = {float(np.mean(PSNRs)):.2f}" + f" mse = {loss:.6f}"
             )
-            PSNRs = []
 
-        if iteration in args.update_alphamask_list:  # [2000, 4000]
-            if reso_cur[0] * reso_cur[1] * reso_cur[2] < 256 ** 3:  # update volume resolution
-                reso_mask = reso_cur
-            new_aabb = tensorf.update_alpha_mask(tuple(reso_mask))
-
-            if iteration == args.update_alphamask_list[0]:
-                tensorf.shrink(new_aabb)
-                L1_reg_weight = args.L1_weight_rest
-                print("continuing L1_reg_weight", L1_reg_weight)
-
-            if iteration == args.update_alphamask_list[1]:
-                # filter rays outside the bbox
-                allrays, allrgbs = tensorf.filtering_rays(allrays, allrgbs)
-                trainingSampler = SimpleSampler(allrgbs.shape[0], args.batch_size)
-
-        if iteration in args.upsample_list:  # [2000, 3000, 4000, 5500, 7000]
-            n_voxels = N_voxel_list.pop(0)
-            reso_cur = N_to_reso(n_voxels, tensorf.aabb)
-            n_samples = min(args.n_samples, cal_n_samples(reso_cur, args.step_ratio))
-            tensorf.upsample_volume_grid(reso_cur)
-
-            if args.lr_upsample_reset:  # True
-                print("reset lr to initial")
-                lr_scale = 1.0  # 0.1 ** (iteration / args.n_iters)
-            else:
-                lr_scale = args.lr_decay_ratio ** (iteration / args.n_iters)
-            grad_vars = tensorf.get_optparam_groups(args.lr_init * lr_scale, args.lr_basis * lr_scale)
-            optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
-
-    tensorf.save(f"{logfolder}/{args.expname}.th")
+    torch.save(tensorf.state_dict(), f"{logfolder}/{args.expname}.th")
 
     # save point cloud file
 
@@ -236,10 +178,6 @@ def do_train(args):
             test_dataset,
             tensorf,
             renderer,
-            f"{logfolder}/{args.expname}/imgs_test_all/",
-            N_vis=-1,
-            N_samples=-1,
-            white_bg=white_bg,
             device=device,
         )
 
@@ -267,9 +205,7 @@ if __name__ == "__main__":
     #     ckpt=None, render_only=0, render_test=1,
     #     render_train=0, render_path=0, export_mesh=0,
     #     accumulate_decay=0.998,
-    #     n_samples=1000000.0,
-    #     step_ratio=0.5, n_voxel_init=2097156,
-    #     n_voxel_final=16777216, upsample_list=[2000, 3000, 4000, 5500, 7000],
-    #     update_alphamask_list=[2000, 4000], idx_view=0, N_vis=5, vis_every=10000)
+    #     step_ratio=0.5,
+    #     idx_view=0, N_vis=5, vis_every=10000)
 
     do_train(args)

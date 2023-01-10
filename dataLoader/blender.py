@@ -13,7 +13,6 @@ from .ray_utils import *
 class BlenderDataset(Dataset):
     def __init__(self, datadir, split="train", downsample=1.0, is_stack=False, N_vis=-1):
         # datadir = './data/nerf_synthetic/lego'
-        self.white_bg = True
         self.near_far = [2.0, 6.0]
         self.scene_bbox = torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]])
         self.blender2opencv = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
@@ -61,7 +60,6 @@ class BlenderDataset(Dataset):
         self.all_rays = []
         self.all_rgbs = []
         self.all_masks = []
-        self.all_depth = []
         self.downsample = 1.0
 
         img_eval_interval = 1 if self.N_vis < 0 else len(self.meta["frames"]) // self.N_vis  # 1
