@@ -67,31 +67,26 @@ def save_input_points(args, tensorf):
     allrays = allrays[select_index]
     allrgbs = allrgbs[select_index]
 
-    # allrays = allrays[0:size]
-    # allrgbs = allrgbs[0:size]
-
     rays_o, rays_d = allrays[:, 0:3], allrays[:, 3:6]
-
-    aabb = torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]])
-    reso_cur = N_to_reso(args.n_voxel_init, aabb)  # [128, 128, 128]
-    n_samples = min(args.n_samples, cal_n_samples(reso_cur, args.step_ratio))  # 100x100x100 --> 443
 
     with torch.no_grad():
         rgb_map, depth_map = renderer(
-            allrays.cpu(),
+            allrays,
             tensorf,
             chunk=args.batch_size,
             device=device,
             is_train=False,
         )
+    rgb_map = rgb_map.cpu()
+    depth_map = depth_map.cpu()
 
-    pc = rays_o + rays_d * depth_map.view(-1, 1).cpu()
-
-    mask = torch.all(torch.cat([pc > aabb[0], pc < aabb[1]], dim=-1), dim=-1)
-    pc = pc[mask]
+    aabb = tensorf.aabb.cpu()
+    pc_xyz = rays_o + rays_d * depth_map.view(-1, 1)
+    mask = torch.all(torch.cat([pc_xyz > aabb[0], pc_xyz < aabb[1]], dim=-1), dim=-1)
+    pc_xyz = pc_xyz[mask]
     rgb_map = rgb_map[mask]
 
-    save_points(pc, rgb_map.cpu(), filename)
+    save_points(pc_xyz, rgb_map, filename)
 
 
 @torch.no_grad()

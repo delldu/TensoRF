@@ -237,7 +237,7 @@ class TensorVMSplit(nn.Module):
 
         mask_filtered = torch.cat(mask_filtered).view(all_rgbs.shape[:-1])
 
-        print(f"Ray filtering done! takes {time.time()-tt} s. ray mask ratio: {torch.sum(mask_filtered) / N}")
+        print(f"Ray filtering done! takes {time.time()-tt} seconds, mask ratio: {torch.sum(mask_filtered) / N}")
         return all_rays[mask_filtered], all_rgbs[mask_filtered]
 
     def feature2dense(self, density_features):
@@ -246,19 +246,11 @@ class TensorVMSplit(nn.Module):
 
     def compute_alpha(self, xyz):
         # xyz.size() -- [16384, 3]
-        # length = tensor(0.0118, device='cuda:0')
-        # alpha_mask = torch.ones_like(xyz[:, 0], dtype=bool)
-        # sigma = torch.zeros(xyz.shape[:-1], device=xyz.device)
-
-        # if alpha_mask.any():  # True
-        #     xyz_sampled = self.normalize_coord(xyz[alpha_mask])
-        #     sigma_feature = self.dense2feature(xyz_sampled)
-        #     valid_sigma = self.feature2dense(sigma_feature)
-        #     sigma[alpha_mask] = valid_sigma
 
         xyz_sampled = self.normalize_coord(xyz)
         sigma_feature = self.dense2feature(xyz_sampled)
         sigma = self.feature2dense(sigma_feature)
+
         # self.step_size -- tensor(0.0118, device='cuda:0')
         alpha = 1.0 - torch.exp(-sigma * self.step_size).view(xyz.shape[:-1])
         return alpha  # alpha.size() -- [16384]
@@ -291,7 +283,7 @@ class TensorVMSplit(nn.Module):
             rgb[color_mask] = valid_rgbs
         # ==> rgb
 
-        acc_map = torch.sum(weight, dim=1) # acc_map.size() -- [4096]
+        acc_map = torch.sum(weight, -1) # acc_map.size() -- [4096]
         rgb_map = torch.sum(weight[..., None] * rgb, -2) # [4096, 3] -- zero !!!
         rgb_map = rgb_map + (1.0 - acc_map[..., None]) # rgb_map.size() -- [4096, 3]
         rgb_map = rgb_map.clamp(0.0, 1.0)
@@ -321,7 +313,7 @@ class TensorVMSplit(nn.Module):
     def dense_L1(self):
         total = 0
         for i in range(len(self.dense_plane)):
-            total += torch.mean(torch.abs(self.dense_plane[i])) + torch.mean(torch.abs(self.dense_line[i]))
+            total = total + torch.mean(torch.abs(self.dense_plane[i])) + torch.mean(torch.abs(self.dense_line[i]))
         # ==> pdb.set_trace()
         return total
 

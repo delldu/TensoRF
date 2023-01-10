@@ -38,8 +38,8 @@ class SimpleSampler:
 
 def do_train(args):
     # init dataset
-    train_dataset = BlenderDataset(args.datadir, split="train", downsample=args.downsample_train, is_stack=False)
-    test_dataset = BlenderDataset(args.datadir, split="test", downsample=args.downsample_train, is_stack=True)
+    train_dataset = BlenderDataset(args.datadir, split="train", downsample=args.downsample_train)
+    test_dataset = BlenderDataset(args.datadir, split="test", downsample=args.downsample_train)
 
     # init resolution
     logfolder = f"{args.basedir}/{args.expname}"
@@ -168,18 +168,9 @@ def do_train(args):
             pbar.set_description(
                 f"Iteration {iteration:05d}:" + f" train_psnr = {float(np.mean(PSNRs)):.2f}" + f" mse = {loss:.6f}"
             )
+            PSNRs = [] # reset PSNR
 
     torch.save(tensorf.state_dict(), f"{logfolder}/{args.expname}.th")
-
-    # save point cloud file
-
-    if args.render_test:
-        evaluation(
-            test_dataset,
-            tensorf,
-            renderer,
-            device=device,
-        )
 
 
 if __name__ == "__main__":
@@ -200,12 +191,10 @@ if __name__ == "__main__":
     #     lr_decay_ratio=0.1,
     #     lr_upsample_reset=1, L1_weight_inital=8e-05,
     #     L1_weight_rest=4e-05,
-    #     color_data_dim=27,
-    #     view_pe=2, feat_pe=2, feature_dim=128,
     #     ckpt=None, render_only=0, render_test=1,
     #     render_train=0, render_path=0, export_mesh=0,
     #     accumulate_decay=0.998,
     #     step_ratio=0.5,
-    #     idx_view=0, N_vis=5, vis_every=10000)
+    #     idx_view=0, vis_every=10000)
 
     do_train(args)

@@ -1,7 +1,6 @@
-import torch, os, imageio
+import torch
 
 from tqdm.auto import tqdm
-from models.tensoRF import raw2alpha, TensorVMSplit
 from utils import *
 import pdb
 
@@ -19,48 +18,3 @@ def OctreeRender_trilinear_fast(rays, tensorf, chunk=4096, is_train=False, devic
         depths.append(depth_map)
 
     return torch.cat(rgbs), torch.cat(depths)
-
-
-@torch.no_grad()
-def evaluation(
-    test_dataset, tensorf, renderer, N_vis=5, device="cuda"
-):
-    PSNRs = []
-    ssims, l_alex, l_vgg = [], [], []
-    # os.makedirs(savePath, exist_ok=True)
-
-    try:
-        tqdm._instances.clear()
-    except Exception:
-        pass
-
-    # near_far = test_dataset.near_far
-    # test_dataset.all_rays.size() -- [200, 640000, 6]
-    # N_vis --  -1
-    img_eval_interval = 1 if N_vis < 0 else max(test_dataset.all_rays.shape[0] // N_vis, 1)
-    idxs = list(range(0, test_dataset.all_rays.shape[0], img_eval_interval))
-    # idxs -- [0, 1, ..., 199]
-
-    # img_eval_interval -- 1
-    # test_dataset.all_rays[0::img_eval_interval].size() -- [200, 640000, 6]
-
-    W, H = test_dataset.img_wh  # (800, 800)
-    pbar = tqdm(total=test_dataset.all_rays.size(0), desc=f"Evaluation")
-    for idx, samples in enumerate(test_dataset.all_rays[0::img_eval_interval]):
-        pbar.update(1)
-
-        rays = samples.view(-1, samples.shape[-1])
-        rgb_map, rgb_depth = renderer(rays, tensorf, chunk=4096, device=device)
-        rgb_map = rgb_map.clamp(0.0, 1.0).reshape(H, W, 3).cpu()
-
-        if len(test_dataset.all_rgbs):
-            gt_rgb = test_dataset.all_rgbs[idxs[idx]].view(H, W, 3)
-            loss = torch.mean((rgb_map - gt_rgb) ** 2)
-            PSNRs.append(-10.0 * np.log(loss.item()) / np.log(10.0))
-
-    if PSNRs:
-        psnr = np.mean(np.asarray(PSNRs))
-        # np.savetxt(f"{savePath}/{prtx}mean.txt", np.asarray([psnr]))
-        print("Evaluation: ", np.asarray([psnr]))
-
-    return PSNRs

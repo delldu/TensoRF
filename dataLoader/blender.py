@@ -11,16 +11,14 @@ from .ray_utils import *
 
 
 class BlenderDataset(Dataset):
-    def __init__(self, datadir, split="train", downsample=1.0, is_stack=False, N_vis=-1):
+    def __init__(self, datadir, split="train", downsample=1.0):
         # datadir = './data/nerf_synthetic/lego'
         self.near_far = [2.0, 6.0]
         self.scene_bbox = torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]])
         self.blender2opencv = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
 
-        self.N_vis = N_vis
         self.root_dir = datadir
         self.split = split
-        self.is_stack = is_stack
         self.img_wh = (int(800 / downsample), int(800 / downsample))
         self.transform = T.ToTensor()
 
@@ -62,8 +60,7 @@ class BlenderDataset(Dataset):
         self.all_masks = []
         self.downsample = 1.0
 
-        img_eval_interval = 1 if self.N_vis < 0 else len(self.meta["frames"]) // self.N_vis  # 1
-        idxs = list(range(0, len(self.meta["frames"]), img_eval_interval))
+        idxs = list(range(0, len(self.meta["frames"])))
         if self.split == "test":
             idxs = idxs[:50]  # speed upp test
 
@@ -96,14 +93,8 @@ class BlenderDataset(Dataset):
             self.all_rays += [torch.cat([rays_o, rays_d], 1)]  # (h*w, 6)
 
         self.poses = torch.stack(self.poses)
-        if not self.is_stack:  # True
-            self.all_rays = torch.cat(self.all_rays, 0)  # (len(self.meta['frames])*h*w, 3)
-            self.all_rgbs = torch.cat(self.all_rgbs, 0)  # (len(self.meta['frames])*h*w, 3)
-        else:
-            self.all_rays = torch.stack(self.all_rays, 0)  # (len(self.meta['frames]),h*w, 3)
-            self.all_rgbs = torch.stack(self.all_rgbs, 0).reshape(
-                -1, *self.img_wh[::-1], 3
-            )  # (len(self.meta['frames]),h,w,3)
+        self.all_rays = torch.cat(self.all_rays, 0)  # (len(self.meta['frames])*h*w, 3)
+        self.all_rgbs = torch.cat(self.all_rgbs, 0)  # (len(self.meta['frames])*h*w, 3)
         # self.all_rays.size() -- [100x800x800, 6]
         # self.all_rgbs.size() -- [100x800x800, 3], RGB
 
@@ -111,13 +102,4 @@ class BlenderDataset(Dataset):
         return len(self.all_rgbs)
 
     def __getitem__(self, idx):
-
-        if self.split == "train":  # use data in the buffers
-            sample = {"rays": self.all_rays[idx], "rgbs": self.all_rgbs[idx]}
-        else:  # create data for each image separately
-            img = self.all_rgbs[idx]
-            rays = self.all_rays[idx]
-            mask = self.all_masks[idx]  # for quantity evaluation
-
-            sample = {"rays": rays, "rgbs": img, "mask": mask}
-        return sample
+        return {"rays": self.all_rays[idx], "rgbs": self.all_rgbs[idx]}

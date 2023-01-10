@@ -2,7 +2,7 @@ datadir = ./data/nerf_synthetic/lego
 expname =  tensorf_lego_VM
 basedir = ./log
 
-n_iters = 3000 # 30000
+n_iters = 4000 # 30000
 batch_size = 4096
 
 n_voxel_init = 2097156 # 128**3, 262144 # 64**3, 
