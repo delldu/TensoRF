@@ -1,34 +1,36 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 # from .sh import eval_sh_bases
 import numpy as np
 import time
 import pdb
 
+
 def positional_encoding(positions, freqs):
     # positions.size() -- [9, 27]
     # freqs -- 2
 
-    freq_bands = (2**torch.arange(freqs).float()).to(positions.device) # freq_bands.size() -- [2]
+    freq_bands = (2 ** torch.arange(freqs).float()).to(positions.device)  # freq_bands.size() -- [2]
     # positions[..., None].size() -- [9, 27, 1]
     # positions.shape[:-1] + (freqs * positions.shape[-1], ) -- torch.Size([9, 54])
-    pts = (positions[..., None] * freq_bands).reshape(
-        positions.shape[:-1] + (freqs * positions.shape[-1], ))
+    pts = (positions[..., None] * freq_bands).reshape(positions.shape[:-1] + (freqs * positions.shape[-1],))
     pts = torch.cat([torch.sin(pts), torch.cos(pts)], dim=-1)
 
-    return pts # pts.size() -- [9, 108]
+    return pts  # pts.size() -- [9, 108]
+
 
 def raw2alpha(sigma, dist):
     # sigma, dist  [N_rays, N_samples]
     # sigma.size() -- [4096, 443]
     # dist.size() -- [4096, 443]
-    alpha = 1. - torch.exp(-sigma*dist) # alpha.size() -- [4096, 443]
-    ones = torch.ones(alpha.shape[0], 1).to(alpha.device) # ones.size() -- [4096, 1]
-    T = torch.cumprod(torch.cat([ones, 1. - alpha + 1e-10], -1), -1) # T.size() -- [4096, 444]
+    alpha = 1.0 - torch.exp(-sigma * dist)  # alpha.size() -- [4096, 443]
+    ones = torch.ones(alpha.shape[0], 1).to(alpha.device)  # ones.size() -- [4096, 1]
+    T = torch.cumprod(torch.cat([ones, 1.0 - alpha + 1e-10], -1), -1)  # T.size() -- [4096, 444]
     weights = alpha * T[:, :-1]  # T[:, :-1].size() -- [4096, 443]
 
-    return alpha, weights # T[:,-1:] -- bg_weight
+    return alpha, weights  # T[:,-1:] -- bg_weight
 
 
 class AlphaGridMask(nn.Module):
@@ -39,17 +41,19 @@ class AlphaGridMask(nn.Module):
         #         [ 1.5000,  1.5000,  1.5000]], device='cuda:0')
         # alpha_volume.size() -- [128, 128, 128]
         self.device = device
-        self.aabb=aabb.to(self.device)
+        self.aabb = aabb.to(self.device)
         self.aabbSize = self.aabb[1] - self.aabb[0]
-        self.invgridSize = 1.0/self.aabbSize * 2
-        self.alpha_volume = alpha_volume.view(1,1,*alpha_volume.shape[-3:])
-        self.grid_size = torch.LongTensor([alpha_volume.shape[-1],alpha_volume.shape[-2],alpha_volume.shape[-3]]).to(self.device)
+        self.invgridSize = 1.0 / self.aabbSize * 2
+        self.alpha_volume = alpha_volume.view(1, 1, *alpha_volume.shape[-3:])
+        self.grid_size = torch.LongTensor([alpha_volume.shape[-1], alpha_volume.shape[-2], alpha_volume.shape[-3]]).to(
+            self.device
+        )
         # self.grid_size -- tensor([128, 128, 128], device='cuda:0')
 
     def sample_alpha(self, xyz_sampled):
         # xyz_sampled.size() -- [482223, 3]
         xyz_sampled = self.normalize_coord(xyz_sampled)
-        alpha_vals = F.grid_sample(self.alpha_volume, xyz_sampled.view(1,-1,1,1,3), align_corners=True).view(-1)
+        alpha_vals = F.grid_sample(self.alpha_volume, xyz_sampled.view(1, -1, 1, 1, 3), align_corners=True).view(-1)
         # alpha_vals.size() -- [482223]
         return alpha_vals
 
@@ -59,7 +63,7 @@ class AlphaGridMask(nn.Module):
 
 
 class MLPRender_Fea(nn.Module):
-    def __init__(self,inChanel, view_pe=6, feat_pe=6, feature_dim=128):
+    def __init__(self, inChanel, view_pe=6, feat_pe=6, feature_dim=128):
         super(MLPRender_Fea, self).__init__()
         # self = MLPRender_Fea(
         #   (mlp): Sequential(
@@ -75,25 +79,22 @@ class MLPRender_Fea(nn.Module):
         # feat_pe = 2
         # feature_dim = 128
 
-        self.in_mlpC = (2*view_pe*3 + 2*feat_pe*inChanel) + 3 + inChanel # 150
+        self.in_mlpC = (2 * view_pe * 3 + 2 * feat_pe * inChanel) + 3 + inChanel  # 150
         self.view_pe = view_pe
         self.feat_pe = feat_pe
         layer1 = torch.nn.Linear(self.in_mlpC, feature_dim)
         layer2 = torch.nn.Linear(feature_dim, feature_dim)
-        layer3 = torch.nn.Linear(feature_dim,3)
+        layer3 = torch.nn.Linear(feature_dim, 3)
 
-        self.mlp = torch.nn.Sequential(
-            layer1, torch.nn.ReLU(inplace=True),
-            layer2, torch.nn.ReLU(inplace=True),
-            layer3)
+        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True), layer3)
 
         torch.nn.init.constant_(self.mlp[-1].bias, 0)
 
     def forward(self, rays_d, features):
         indata = [features, rays_d]
-        if self.feat_pe > 0: # True
+        if self.feat_pe > 0:  # True
             indata += [positional_encoding(features, self.feat_pe)]
-        if self.view_pe > 0: # True
+        if self.view_pe > 0:  # True
             indata += [positional_encoding(rays_d, self.view_pe)]
         mlp_in = torch.cat(indata, dim=-1)
         rgb = self.mlp(mlp_in)
@@ -101,14 +102,23 @@ class MLPRender_Fea(nn.Module):
 
         return rgb
 
+
 class TensorVMSplit(nn.Module):
-    def __init__(self, aabb, grid_size, device, 
-                    dense_n_comp = [16, 16, 16], 
-                    color_n_comp = [16, 16, 16], 
-                    color_data_dim = 27,
-                    alpha_mask = None, near_far=[2.0, 6.0],
-                    view_pe = 2, feat_pe = 2, 
-                    feature_dim=128, step_ratio=0.5):
+    def __init__(
+        self,
+        aabb,
+        grid_size,
+        device,
+        dense_n_comp=[16, 16, 16],
+        color_n_comp=[16, 16, 16],
+        color_data_dim=27,
+        alpha_mask=None,
+        near_far=[2.0, 6.0],
+        view_pe=2,
+        feat_pe=2,
+        feature_dim=128,
+        step_ratio=0.5,
+    ):
         super(TensorVMSplit, self).__init__()
         # self = TensorVMSplit()
         # aabb = tensor([[-1.5000, -1.5000, -1.5000],
@@ -121,11 +131,11 @@ class TensorVMSplit(nn.Module):
         self.color_data_dim = color_data_dim
         self.aabb = aabb
         self.alpha_mask = alpha_mask
-        self.device=device
+        self.device = device
 
-        self.dense_shift = -10.0 # shift density in softplus; making density = 0  when feature == 0
+        self.dense_shift = -10.0  # shift density in softplus; making density = 0  when feature == 0
         self.alpha_mask_threshold = 0.0001
-        self.distance_scale = 25 # 5x5 sigma 
+        self.distance_scale = 25  # 5x5 sigma
         self.march_weight_threshold = 0.0001
 
         self.near_far = near_far
@@ -133,8 +143,8 @@ class TensorVMSplit(nn.Module):
 
         self.update_step_size(grid_size)
 
-        self.matMode = [[0,1], [0,2], [1,2]]
-        self.vecMode =  [2, 1, 0]
+        self.matMode = [[0, 1], [0, 2], [1, 2]]
+        self.vecMode = [2, 1, 0]
 
         self.init_svd_volume(device)
 
@@ -144,7 +154,6 @@ class TensorVMSplit(nn.Module):
 
         print("view_pe", view_pe, "feat_pe", feat_pe)
         print(self.render_model)
-
 
     def init_svd_volume(self, device):
         # self.dense_n_comp -- [16, 16, 16]
@@ -156,14 +165,14 @@ class TensorVMSplit(nn.Module):
 
     def init_one_svd(self, n_component, grid_size, scale, device):
         plane_coef, line_coef = [], []
-        for i in range(len(self.vecMode)): # self.vecMode -- [2, 1, 0]
+        for i in range(len(self.vecMode)):  # self.vecMode -- [2, 1, 0]
             vec_id = self.vecMode[i]
             mat_id_0, mat_id_1 = self.matMode[i]
             # self.matMode -- [[0, 1], [0, 2], [1, 2]]
-            plane_coef.append(torch.nn.Parameter(
-                scale * torch.randn((1, n_component[i], grid_size[mat_id_1], grid_size[mat_id_0]))))  #
-            line_coef.append(
-                torch.nn.Parameter(scale * torch.randn((1, n_component[i], grid_size[vec_id], 1))))
+            plane_coef.append(
+                torch.nn.Parameter(scale * torch.randn((1, n_component[i], grid_size[mat_id_1], grid_size[mat_id_0])))
+            )  #
+            line_coef.append(torch.nn.Parameter(scale * torch.randn((1, n_component[i], grid_size[vec_id], 1))))
 
         # n_component = [16, 16, 16]
         # grid_size = tensor([128, 128, 128], device='cuda:0')
@@ -176,10 +185,10 @@ class TensorVMSplit(nn.Module):
         print("aabb", self.aabb.view(-1))
         print("grid size", grid_size)
         self.aabbSize = self.aabb[1] - self.aabb[0]
-        self.invaabbSize = 2.0/self.aabbSize
-        self.grid_size= torch.LongTensor(grid_size).to(self.device)
+        self.invaabbSize = 2.0 / self.aabbSize
+        self.grid_size = torch.LongTensor(grid_size).to(self.device)
         self.units = self.aabbSize / (self.grid_size - 1)
-        self.step_size=torch.mean(self.units) * self.step_ratio
+        self.step_size = torch.mean(self.units) * self.step_ratio
 
         diag = torch.sqrt(torch.sum(torch.square(self.aabbSize)))
         self.n_samples = int((diag / self.step_size).item()) + 1
@@ -192,41 +201,41 @@ class TensorVMSplit(nn.Module):
 
     def get_kwargs(self):
         return {
-            'aabb': self.aabb,
-            'grid_size':self.grid_size.tolist(),
-            'dense_n_comp': self.dense_n_comp,
-            'color_n_comp': self.color_n_comp,
-            'color_data_dim': self.color_data_dim,
-
-            'alpha_mask_threshold': self.alpha_mask_threshold,
-            'distance_scale': self.distance_scale,
-            'march_weight_threshold': self.march_weight_threshold,
-
-            'near_far': self.near_far,
-            'step_ratio': self.step_ratio,
-
-            'view_pe': self.view_pe,
-            'feat_pe': self.feat_pe,
-            'feature_dim': self.feature_dim
+            "aabb": self.aabb,
+            "grid_size": self.grid_size.tolist(),
+            "dense_n_comp": self.dense_n_comp,
+            "color_n_comp": self.color_n_comp,
+            "color_data_dim": self.color_data_dim,
+            "alpha_mask_threshold": self.alpha_mask_threshold,
+            "distance_scale": self.distance_scale,
+            "march_weight_threshold": self.march_weight_threshold,
+            "near_far": self.near_far,
+            "step_ratio": self.step_ratio,
+            "view_pe": self.view_pe,
+            "feat_pe": self.feat_pe,
+            "feature_dim": self.feature_dim,
         }
 
     def save(self, path):
         kwargs = self.get_kwargs()
-        ckpt = {'kwargs': kwargs, 'state_dict': self.state_dict()}
+        ckpt = {"kwargs": kwargs, "state_dict": self.state_dict()}
         if self.alpha_mask is not None:
             alpha_volume = self.alpha_mask.alpha_volume.bool().cpu().numpy()
-            ckpt.update({'alpha_mask.shape':alpha_volume.shape})
-            ckpt.update({'alpha_mask.mask':np.packbits(alpha_volume.reshape(-1))})
-            ckpt.update({'alpha_mask.aabb': self.alpha_mask.aabb.cpu()})
+            ckpt.update({"alpha_mask.shape": alpha_volume.shape})
+            ckpt.update({"alpha_mask.mask": np.packbits(alpha_volume.reshape(-1))})
+            ckpt.update({"alpha_mask.aabb": self.alpha_mask.aabb.cpu()})
         torch.save(ckpt, path)
 
     def load(self, ckpt):
-        if 'alpha_mask.aabb' in ckpt.keys(): # True
-            length = np.prod(ckpt['alpha_mask.shape'])
-            alpha_volume = torch.from_numpy(np.unpackbits(ckpt['alpha_mask.mask'])[:length].reshape(ckpt['alpha_mask.shape']))
-            self.alpha_mask = AlphaGridMask(self.device, ckpt['alpha_mask.aabb'].to(self.device), alpha_volume.float().to(self.device))
-        self.load_state_dict(ckpt['state_dict'])
-
+        if "alpha_mask.aabb" in ckpt.keys():  # True
+            length = np.prod(ckpt["alpha_mask.shape"])
+            alpha_volume = torch.from_numpy(
+                np.unpackbits(ckpt["alpha_mask.mask"])[:length].reshape(ckpt["alpha_mask.shape"])
+            )
+            self.alpha_mask = AlphaGridMask(
+                self.device, ckpt["alpha_mask.aabb"].to(self.device), alpha_volume.float().to(self.device)
+            )
+        self.load_state_dict(ckpt["state_dict"])
 
     def sample_ray(self, rays_o, rays_d, is_train=True, N_samples=-1):
         # is_train = True
@@ -235,26 +244,26 @@ class TensorVMSplit(nn.Module):
         # rays_d.size() -- [4096, 3]
         N_samples = N_samples if N_samples > 0 else self.n_samples
         near, far = self.near_far
-        vec = torch.where(rays_d==0, torch.full_like(rays_d, 1e-6), rays_d)
+        vec = torch.where(rays_d == 0, torch.full_like(rays_d, 1e-6), rays_d)
         rate_a = (self.aabb[1] - rays_o) / vec
         rate_b = (self.aabb[0] - rays_o) / vec
-        t_min = torch.minimum(rate_a, rate_b).amax(-1).clamp(min=near, max=far) # size() -- [4096]
+        t_min = torch.minimum(rate_a, rate_b).amax(-1).clamp(min=near, max=far)  # size() -- [4096]
 
         rng = torch.arange(N_samples)[None].float()
         if is_train:
-            rng = rng.repeat(rays_d.shape[-2], 1) # rays_d.shape[-2] -- 4096
-            rng += torch.rand_like(rng[:, [0]]) # torch.rand_like(rng[:, [0]]) -- [[0.0327]]
-        #self.step_size -- tensor(0.0118, device='cuda:0')
+            rng = rng.repeat(rays_d.shape[-2], 1)  # rays_d.shape[-2] -- 4096
+            rng += torch.rand_like(rng[:, [0]])  # torch.rand_like(rng[:, [0]]) -- [[0.0327]]
+        # self.step_size -- tensor(0.0118, device='cuda:0')
         # rng -- tensor([[    0.0327,     1.0327,     2.0327,  ...,   440.0327,   441.0327,
         #    442.0327],
         # [    0.7392,     1.7392,     2.7392,  ...,   440.7392,   441.7392,
         #    442.7392]])
         step = self.step_size * rng.to(rays_o.device)
-        interpx = (t_min[..., None] + step) # interpx.size() -- [4096, 443]
+        interpx = t_min[..., None] + step  # interpx.size() -- [4096, 443]
         # (Pdb) rays_o.size() -- [4096, 3]
         # (Pdb) rays_o[...,None, :].size() -- [4096, 1, 3]
-        rays_points = rays_o[...,None, :] + rays_d[...,None,:] * interpx[..., None]
-        mask_outbbox = ((self.aabb[0] > rays_points) | (rays_points>self.aabb[1])).any(dim=-1)
+        rays_points = rays_o[..., None, :] + rays_d[..., None, :] * interpx[..., None]
+        mask_outbbox = ((self.aabb[0] > rays_points) | (rays_points > self.aabb[1])).any(dim=-1)
 
         # rays_points.size() -- [4096, 443, 3]
         # interpx.size() -- [4096, 443]
@@ -268,16 +277,19 @@ class TensorVMSplit(nn.Module):
         grid_size = self.grid_size if grid_size is None else grid_size
         X, Y, Z = grid_size
 
-        samples = torch.stack(torch.meshgrid(
-            torch.linspace(0, 1, X),
-            torch.linspace(0, 1, Y),
-            torch.linspace(0, 1, Z),
-        ), -1).to(self.device)
+        samples = torch.stack(
+            torch.meshgrid(
+                torch.linspace(0, 1, X),
+                torch.linspace(0, 1, Y),
+                torch.linspace(0, 1, Z),
+            ),
+            -1,
+        ).to(self.device)
         dense_xyz = self.aabb[0] * (1.0 - samples) + self.aabb[1] * samples
 
         alpha = torch.zeros_like(dense_xyz[..., 0])
         for i in range(X):
-            alpha[i] = self.compute_alpha(dense_xyz[i].view(-1,3), self.step_size).view((Y, Z))
+            alpha[i] = self.compute_alpha(dense_xyz[i].view(-1, 3), self.step_size).view((Y, Z))
 
         # alpha.size() -- [128, 128, 128]
         # dense_xyz.size() -- [128, 128, 128, 3]
@@ -288,8 +300,8 @@ class TensorVMSplit(nn.Module):
         # grid_size = (128, 128, 128)
         X, Y, Z = grid_size
         alpha, dense_xyz = self.get_dense_alpha(grid_size)
-        dense_xyz = dense_xyz.transpose(0,2).contiguous()
-        alpha = alpha.clamp(0,1).transpose(0,2).contiguous()[None,None]
+        dense_xyz = dense_xyz.transpose(0, 2).contiguous()
+        alpha = alpha.clamp(0, 1).transpose(0, 2).contiguous()[None, None]
         total_voxels = X * Y * Z
 
         ks = 3
@@ -306,20 +318,20 @@ class TensorVMSplit(nn.Module):
         new_aabb = torch.stack((xyz_min, xyz_max))
 
         total = torch.sum(alpha)
-        print(f"bbox: {xyz_min, xyz_max} alpha rest %%%f"%(total/total_voxels*100))
+        print(f"bbox: {xyz_min, xyz_max} alpha rest %%%f" % (total / total_voxels * 100))
 
         # ==> pdb.set_trace()
         return new_aabb
 
     @torch.no_grad()
-    def filtering_rays(self, all_rays, all_rgbs, N_samples=256, chunk=10240*5):
+    def filtering_rays(self, all_rays, all_rgbs, N_samples=256, chunk=10240 * 5):
         # N_samples = 256
         # chunk = 51200
         # bbox_only = True
-        print('========> filtering rays ...')
+        print("========> filtering rays ...")
         tt = time.time()
         # all_rays.shape[:-1] -- [64000000]
-        N = torch.tensor(all_rays.shape[:-1]).prod() # 64000000
+        N = torch.tensor(all_rays.shape[:-1]).prod()  # 64000000
 
         mask_filtered = []
         idx_chunks = torch.split(torch.arange(N), chunk)
@@ -330,61 +342,60 @@ class TensorVMSplit(nn.Module):
             vec = torch.where(rays_d == 0, torch.full_like(rays_d, 1e-6), rays_d)
             rate_a = (self.aabb[1] - rays_o) / vec
             rate_b = (self.aabb[0] - rays_o) / vec
-            t_min = torch.minimum(rate_a, rate_b).amax(-1) #.clamp(min=near, max=far)
-            t_max = torch.maximum(rate_a, rate_b).amin(-1) #.clamp(min=near, max=far)
+            t_min = torch.minimum(rate_a, rate_b).amax(-1)  # .clamp(min=near, max=far)
+            t_max = torch.maximum(rate_a, rate_b).amin(-1)  # .clamp(min=near, max=far)
             mask_inbbox = t_max > t_min
             mask_filtered.append(mask_inbbox.cpu())
 
         mask_filtered = torch.cat(mask_filtered).view(all_rgbs.shape[:-1])
 
-        print(f'Ray filtering done! takes {time.time()-tt} s. ray mask ratio: {torch.sum(mask_filtered) / N}')
+        print(f"Ray filtering done! takes {time.time()-tt} s. ray mask ratio: {torch.sum(mask_filtered) / N}")
         return all_rays[mask_filtered], all_rgbs[mask_filtered]
-
 
     def feature2dense(self, density_features):
         # density_features.size() -- [985197]
-        return F.softplus(density_features + self.dense_shift) # self.dense_shift == -10 for softplus
+        return F.softplus(density_features + self.dense_shift)  # self.dense_shift == -10 for softplus
 
     def compute_alpha(self, xyz_locs, length=1):
         # xyz_locs.size() -- [16384, 3]
         # length = tensor(0.0118, device='cuda:0')
 
-        if self.alpha_mask is not None: # False
+        if self.alpha_mask is not None:  # False
             alphas = self.alpha_mask.sample_alpha(xyz_locs)
             alpha_mask = alphas > 0
         else:
-            alpha_mask = torch.ones_like(xyz_locs[:,0], dtype=bool)
-            
+            alpha_mask = torch.ones_like(xyz_locs[:, 0], dtype=bool)
+
         sigma = torch.zeros(xyz_locs.shape[:-1], device=xyz_locs.device)
 
-        if alpha_mask.any(): # True
+        if alpha_mask.any():  # True
             xyz_sampled = self.normalize_coord(xyz_locs[alpha_mask])
             sigma_feature = self.dense2feature(xyz_sampled)
             valid_sigma = self.feature2dense(sigma_feature)
             sigma[alpha_mask] = valid_sigma
-        
-        alpha = 1.0 - torch.exp(-sigma*length).view(xyz_locs.shape[:-1])
-        return alpha # alpha.size() -- [16384]
+
+        alpha = 1.0 - torch.exp(-sigma * length).view(xyz_locs.shape[:-1])
+        return alpha  # alpha.size() -- [16384]
 
     def forward(self, rays_chunk, white_bg=True, is_train=False, N_samples=-1):
         # sample points
         rays_o = rays_chunk[:, 0:3]
         rays_d = rays_chunk[:, 3:6]
-        xyz_sampled, z_vals, ray_valid = self.sample_ray(rays_o, rays_d, is_train=is_train,N_samples=N_samples)
+        xyz_sampled, z_vals, ray_valid = self.sample_ray(rays_o, rays_d, is_train=is_train, N_samples=N_samples)
         dists = torch.cat((z_vals[:, 1:] - z_vals[:, :-1], torch.zeros_like(z_vals[:, :1])), dim=-1)
         rays_d = rays_d.view(-1, 1, 3).expand(xyz_sampled.shape)
-        
+
         if self.alphaMask is not None:
             alphas = self.alphaMask.sample_alpha(xyz_sampled[ray_valid])
             alpha_mask = alphas > 0
             ray_invalid = ~ray_valid
-            ray_invalid[ray_valid] |= (~alpha_mask)
+            ray_invalid[ray_valid] |= ~alpha_mask
             ray_valid = ~ray_invalid
 
         sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
         rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
 
-        if ray_valid.any(): # True ?
+        if ray_valid.any():  # True ?
             xyz_sampled = self.normalize_coord(xyz_sampled)
             sigma_feature = self.dense2feature(xyz_sampled[ray_valid])
             valid_sigma = self.feature2dense(sigma_feature)
@@ -396,7 +407,6 @@ class TensorVMSplit(nn.Module):
 
             validsigma = self.feature2dense(sigma_feature)
             sigma[ray_valid] = validsigma
-
 
         alpha, weight = raw2alpha(sigma, dists * self.distance_scale)
 
@@ -410,44 +420,61 @@ class TensorVMSplit(nn.Module):
         acc_map = torch.sum(weight, -1)
         rgb_map = torch.sum(weight[..., None] * rgb, -2)
 
-        if white_bg or (is_train and torch.rand((1,))<0.5):
-            rgb_map = rgb_map + (1. - acc_map[..., None])
-        
+        if white_bg or (is_train and torch.rand((1,)) < 0.5):
+            rgb_map = rgb_map + (1.0 - acc_map[..., None])
+
         rgb_map = rgb_map.clamp(0.0, 1.0)
         with torch.no_grad():
             depth_map = torch.sum(weight * z_vals, -1)
-            depth_map = depth_map + (1. - acc_map) * rays_chunk[..., -1]
+            depth_map = depth_map + (1.0 - acc_map) * rays_chunk[..., -1]
 
-        return rgb_map, depth_map # rgb, sigma, alpha, weight, bg_weight
+        return rgb_map, depth_map  # rgb, sigma, alpha, weight, bg_weight
 
-    def get_optparam_groups(self, lr_init_spatialxyz = 0.02, lr_init_network = 0.001):
+    def get_optparam_groups(self, lr_init_spatialxyz=0.02, lr_init_network=0.001):
         # what's app ?
-        grad_vars = [{'params': self.dense_line, 'lr': lr_init_spatialxyz}, 
-                     {'params': self.dense_plane, 'lr': lr_init_spatialxyz},
-                     {'params': self.color_line, 'lr': lr_init_spatialxyz}, 
-                     {'params': self.color_plane, 'lr': lr_init_spatialxyz},
-                     {'params': self.basis_mat.parameters(), 'lr':lr_init_network}]
+        grad_vars = [
+            {"params": self.dense_line, "lr": lr_init_spatialxyz},
+            {"params": self.dense_plane, "lr": lr_init_spatialxyz},
+            {"params": self.color_line, "lr": lr_init_spatialxyz},
+            {"params": self.color_plane, "lr": lr_init_spatialxyz},
+            {"params": self.basis_mat.parameters(), "lr": lr_init_network},
+        ]
         if isinstance(self.render_model, nn.Module):
-            grad_vars += [{'params':self.render_model.parameters(), 'lr':lr_init_network}]
+            grad_vars += [{"params": self.render_model.parameters(), "lr": lr_init_network}]
         return grad_vars
-
 
     def dense_L1(self):
         total = 0
         for idx in range(len(self.dense_plane)):
-            total = total + torch.mean(torch.abs(self.dense_plane[idx])) + torch.mean(torch.abs(self.dense_line[idx]))# + torch.mean(torch.abs(self.color_plane[idx])) + torch.mean(torch.abs(self.dense_plane[idx]))
+            total = (
+                total + torch.mean(torch.abs(self.dense_plane[idx])) + torch.mean(torch.abs(self.dense_line[idx]))
+            )  # + torch.mean(torch.abs(self.color_plane[idx])) + torch.mean(torch.abs(self.dense_plane[idx]))
         # ==> pdb.set_trace()
         return total
-    
+
     def dense2feature(self, xyz_sampled):
         # xyz_sampled.size() -- [985197, 3]
         # self.matMode -- [[0, 1], [0, 2], [1, 2]]
         # self.vecMode -- [2, 1, 0]
 
         # plane + line basis
-        coordinate_plane = torch.stack((xyz_sampled[..., self.matMode[0]], xyz_sampled[..., self.matMode[1]], xyz_sampled[..., self.matMode[2]])).detach().view(3, -1, 1, 2)
-        coordinate_line = torch.stack((xyz_sampled[..., self.vecMode[0]], xyz_sampled[..., self.vecMode[1]], xyz_sampled[..., self.vecMode[2]]))
-        coordinate_line = torch.stack((torch.zeros_like(coordinate_line), coordinate_line), dim=-1).detach().view(3, -1, 1, 2)
+        coordinate_plane = (
+            torch.stack(
+                (
+                    xyz_sampled[..., self.matMode[0]],
+                    xyz_sampled[..., self.matMode[1]],
+                    xyz_sampled[..., self.matMode[2]],
+                )
+            )
+            .detach()
+            .view(3, -1, 1, 2)
+        )
+        coordinate_line = torch.stack(
+            (xyz_sampled[..., self.vecMode[0]], xyz_sampled[..., self.vecMode[1]], xyz_sampled[..., self.vecMode[2]])
+        )
+        coordinate_line = (
+            torch.stack((torch.zeros_like(coordinate_line), coordinate_line), dim=-1).detach().view(3, -1, 1, 2)
+        )
         # coordinate_plane.size() -- [3, 985197, 1, 2]
         # coordinate_line.size() -- [3, 985197, 1, 2]
 
@@ -459,24 +486,39 @@ class TensorVMSplit(nn.Module):
         #     (2): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
         # )
         for idx_plane in range(len(self.dense_plane)):
-            plane_coef_point = F.grid_sample(self.dense_plane[idx_plane], coordinate_plane[[idx_plane]],
-                                                align_corners=True).view(-1, *xyz_sampled.shape[:1])
-            line_coef_point = F.grid_sample(self.dense_line[idx_plane], coordinate_line[[idx_plane]],
-                                            align_corners=True).view(-1, *xyz_sampled.shape[:1])
+            plane_coef_point = F.grid_sample(
+                self.dense_plane[idx_plane], coordinate_plane[[idx_plane]], align_corners=True
+            ).view(-1, *xyz_sampled.shape[:1])
+            line_coef_point = F.grid_sample(
+                self.dense_line[idx_plane], coordinate_line[[idx_plane]], align_corners=True
+            ).view(-1, *xyz_sampled.shape[:1])
             sigma_feature = sigma_feature + torch.sum(plane_coef_point * line_coef_point, dim=0)
 
-        return sigma_feature # sigma_feature.size() -- [985197]
-
+        return sigma_feature  # sigma_feature.size() -- [985197]
 
     def color2feature(self, xyz_sampled):
         # xyz_sampled.size() -- [9, 3]
 
         # plane + line basis
-        coordinate_plane = torch.stack((xyz_sampled[..., self.matMode[0]], xyz_sampled[..., self.matMode[1]], xyz_sampled[..., self.matMode[2]])).detach().view(3, -1, 1, 2)
-        coordinate_line = torch.stack((xyz_sampled[..., self.vecMode[0]], xyz_sampled[..., self.vecMode[1]], xyz_sampled[..., self.vecMode[2]]))
-        coordinate_line = torch.stack((torch.zeros_like(coordinate_line), coordinate_line), dim=-1).detach().view(3, -1, 1, 2)
+        coordinate_plane = (
+            torch.stack(
+                (
+                    xyz_sampled[..., self.matMode[0]],
+                    xyz_sampled[..., self.matMode[1]],
+                    xyz_sampled[..., self.matMode[2]],
+                )
+            )
+            .detach()
+            .view(3, -1, 1, 2)
+        )
+        coordinate_line = torch.stack(
+            (xyz_sampled[..., self.vecMode[0]], xyz_sampled[..., self.vecMode[1]], xyz_sampled[..., self.vecMode[2]])
+        )
+        coordinate_line = (
+            torch.stack((torch.zeros_like(coordinate_line), coordinate_line), dim=-1).detach().view(3, -1, 1, 2)
+        )
 
-        plane_coef_point,line_coef_point = [],[]
+        plane_coef_point, line_coef_point = [], []
         # (Pdb) self.color_plane
         # ParameterList(
         #     (0): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
@@ -484,10 +526,16 @@ class TensorVMSplit(nn.Module):
         #     (2): Parameter containing: [torch.cuda.FloatTensor of size 1x16x128x128 (GPU 0)]
         # )
         for idx_plane in range(len(self.color_plane)):
-            plane_coef_point.append(F.grid_sample(self.color_plane[idx_plane], coordinate_plane[[idx_plane]],
-                                                align_corners=True).view(-1, *xyz_sampled.shape[:1]))
-            line_coef_point.append(F.grid_sample(self.color_line[idx_plane], coordinate_line[[idx_plane]],
-                                            align_corners=True).view(-1, *xyz_sampled.shape[:1]))
+            plane_coef_point.append(
+                F.grid_sample(self.color_plane[idx_plane], coordinate_plane[[idx_plane]], align_corners=True).view(
+                    -1, *xyz_sampled.shape[:1]
+                )
+            )
+            line_coef_point.append(
+                F.grid_sample(self.color_line[idx_plane], coordinate_line[[idx_plane]], align_corners=True).view(
+                    -1, *xyz_sampled.shape[:1]
+                )
+            )
         plane_coef_point, line_coef_point = torch.cat(plane_coef_point), torch.cat(line_coef_point)
 
         # plane_coef_point.size() -- [48, 9]
@@ -501,10 +549,16 @@ class TensorVMSplit(nn.Module):
             vec_id = self.vecMode[i]
             mat_id_0, mat_id_1 = self.matMode[i]
             plane_coef[i] = torch.nn.Parameter(
-                F.interpolate(plane_coef[i].data, size=(res_target[mat_id_1], res_target[mat_id_0]), mode='bilinear',
-                              align_corners=True))
+                F.interpolate(
+                    plane_coef[i].data,
+                    size=(res_target[mat_id_1], res_target[mat_id_0]),
+                    mode="bilinear",
+                    align_corners=True,
+                )
+            )
             line_coef[i] = torch.nn.Parameter(
-                F.interpolate(line_coef[i].data, size=(res_target[vec_id], 1), mode='bilinear', align_corners=True))
+                F.interpolate(line_coef[i].data, size=(res_target[vec_id], 1), mode="bilinear", align_corners=True)
+            )
         return plane_coef, line_coef
 
     @torch.no_grad()
@@ -513,7 +567,7 @@ class TensorVMSplit(nn.Module):
         self.dense_plane, self.dense_line = self.up_sampling_vm(self.dense_plane, self.dense_line, res_target)
 
         self.update_step_size(res_target)
-        print(f'upsamping to {res_target}')
+        print(f"upsamping to {res_target}")
         # ==> pdb.set_trace()
 
     @torch.no_grad()
@@ -532,26 +586,21 @@ class TensorVMSplit(nn.Module):
 
         for i in range(len(self.vecMode)):
             mode0 = self.vecMode[i]
-            self.dense_line[i] = torch.nn.Parameter(
-                self.dense_line[i].data[...,t_l[mode0]:b_r[mode0],:]
-            )
-            self.color_line[i] = torch.nn.Parameter(
-                self.color_line[i].data[...,t_l[mode0]:b_r[mode0],:]
-            )
+            self.dense_line[i] = torch.nn.Parameter(self.dense_line[i].data[..., t_l[mode0] : b_r[mode0], :])
+            self.color_line[i] = torch.nn.Parameter(self.color_line[i].data[..., t_l[mode0] : b_r[mode0], :])
             mode0, mode1 = self.matMode[i]
             self.dense_plane[i] = torch.nn.Parameter(
-                self.dense_plane[i].data[...,t_l[mode1]:b_r[mode1],t_l[mode0]:b_r[mode0]]
+                self.dense_plane[i].data[..., t_l[mode1] : b_r[mode1], t_l[mode0] : b_r[mode0]]
             )
             self.color_plane[i] = torch.nn.Parameter(
-                self.color_plane[i].data[...,t_l[mode1]:b_r[mode1],t_l[mode0]:b_r[mode0]]
+                self.color_plane[i].data[..., t_l[mode1] : b_r[mode1], t_l[mode0] : b_r[mode0]]
             )
 
-
         if not torch.all(self.alpha_mask.grid_size == self.grid_size):
-            t_l_r, b_r_r = t_l / (self.grid_size-1), (b_r-1) / (self.grid_size-1)
+            t_l_r, b_r_r = t_l / (self.grid_size - 1), (b_r - 1) / (self.grid_size - 1)
             correct_aabb = torch.zeros_like(new_aabb)
-            correct_aabb[0] = (1-t_l_r)*self.aabb[0] + t_l_r*self.aabb[1]
-            correct_aabb[1] = (1-b_r_r)*self.aabb[0] + b_r_r*self.aabb[1]
+            correct_aabb[0] = (1 - t_l_r) * self.aabb[0] + t_l_r * self.aabb[1]
+            correct_aabb[1] = (1 - b_r_r) * self.aabb[0] + b_r_r * self.aabb[1]
             print("aabb", new_aabb, "\ncorrect aabb", correct_aabb)
             new_aabb = correct_aabb
 

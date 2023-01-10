@@ -4,14 +4,16 @@ import skimage.measure
 
 import pdb
 
+
 def N_to_reso(n_voxels, bbox):
     xyz_min, xyz_max = bbox
     dim = len(xyz_min)
     voxel_size = ((xyz_max - xyz_min).prod() / n_voxels).pow(1 / dim)
     return ((xyz_max - xyz_min) / voxel_size).long().tolist()
 
+
 def cal_n_samples(reso, step_ratio=0.5):
-    return int(np.linalg.norm(reso)/step_ratio)
+    return int(np.linalg.norm(reso) / step_ratio)
 
 
 def convert_sdf_samples_to_ply(
@@ -32,24 +34,22 @@ def convert_sdf_samples_to_ply(
     """
 
     numpy_3d_sdf_tensor = pytorch_3d_sdf_tensor.numpy()
-    voxel_size = list((bbox[1]-bbox[0]) / np.array(pytorch_3d_sdf_tensor.shape))
+    voxel_size = list((bbox[1] - bbox[0]) / np.array(pytorch_3d_sdf_tensor.shape))
 
-    verts, faces, normals, values = skimage.measure.marching_cubes(
-        numpy_3d_sdf_tensor, level=level, spacing=voxel_size
-    )
+    verts, faces, normals, values = skimage.measure.marching_cubes(numpy_3d_sdf_tensor, level=level, spacing=voxel_size)
     # verts.shape -- (284621, 3)
     # faces.shape -- (572646, 3)
     # normals.shape -- (284621, 3)
     # values.shape -- (284621,)
 
-    faces = faces[...,::-1] # inverse face orientation
+    faces = faces[..., ::-1]  # inverse face orientation
 
     # transform from voxel coordinates to camera coordinates
     # note x and y are flipped in the output of marching_cubes
     mesh_points = np.zeros_like(verts)
-    mesh_points[:, 0] = bbox[0,0] + verts[:, 0]
-    mesh_points[:, 1] = bbox[0,1] + verts[:, 1]
-    mesh_points[:, 2] = bbox[0,2] + verts[:, 2]
+    mesh_points[:, 0] = bbox[0, 0] + verts[:, 0]
+    mesh_points[:, 1] = bbox[0, 1] + verts[:, 1]
+    mesh_points[:, 2] = bbox[0, 2] + verts[:, 2]
 
     # try writing to the ply file
     num_verts = verts.shape[0]
