@@ -216,13 +216,13 @@ class TensorVMSplit(nn.Module):
             sigma[ray_valid] = valid_sigma
         # ==> sigma
 
-        rgbs = torch.zeros(N, S, 3).to(xyz_sampled.device) # rgb is zeros
+        rgbs = torch.zeros(N, S, 3).to(xyz_sampled.device)  # rgb is zeros
         alpha, weight = raw2alpha(sigma, t_deltas * self.distance_scale)  # weight.size() -- [4096, 440]
         color_mask = weight > self.march_weight_threshold
         if color_mask.any():
             color_features = self.color2feature(xyz_sampled[color_mask])
             valid_rgbs = self.render_model(rays_d[color_mask], color_features)
-            rgbs[color_mask] = valid_rgbs # set rgbs right values now from zeros !!!
+            rgbs[color_mask] = valid_rgbs  # set rgbs right values now from zeros !!!
         # ==> rgbs
 
         acc_map = torch.sum(weight, -1)  # acc_map.size() -- [4096]

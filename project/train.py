@@ -94,7 +94,7 @@ if __name__ == "__main__":
             pbar.set_description(
                 f"Iteration {iteration:05d}:" + f" train_psnr = {float(np.mean(PSNRs)):.2f}" + f" mse = {loss:.6f}"
             )
-            PSNRs = [] # reset PSNR
+            PSNRs = []  # reset PSNR
             for param_group in optimizer.param_groups:
                 param_group["lr"] = param_group["lr"] * lr_factor  # xxxx8888
 
