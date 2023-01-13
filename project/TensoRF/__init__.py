@@ -205,4 +205,3 @@ def point_predict(model, rays, device, batch_size=2048):
     rgb_map = rgb_map[mask]
 
     return xyz_map, rgb_map
-

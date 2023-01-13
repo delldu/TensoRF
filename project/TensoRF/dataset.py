@@ -189,8 +189,8 @@ class BlenderDataset(Dataset):
             rays_chunk = all_rays[index]
             rays_o, rays_d = rays_chunk[..., :3], rays_chunk[..., 3:6]
             vec = torch.where(rays_d == 0, torch.full_like(rays_d, 1e-6), rays_d)
-            rate_a = (torch.tensor(self.scene_bbox[1])/self.downsample - rays_o) / vec
-            rate_b = (torch.tensor(self.scene_bbox[0])/self.downsample - rays_o) / vec
+            rate_a = (torch.tensor(self.scene_bbox[1]) / self.downsample - rays_o) / vec
+            rate_b = (torch.tensor(self.scene_bbox[0]) / self.downsample - rays_o) / vec
             t_min = torch.minimum(rate_a, rate_b).amax(-1)
             t_max = torch.maximum(rate_a, rate_b).amin(-1)
             mask_inbbox = t_max > t_min

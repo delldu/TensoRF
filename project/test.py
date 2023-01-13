@@ -15,6 +15,7 @@ import torch
 import TensoRF
 import pdb  # For debug
 
+
 def save_points(xyzs, rgbs, filename):
     """Save to point cloud file"""
     print(f"Saving {xyzs.size(0)} points to {filename} ...")

@@ -93,7 +93,7 @@ class TensorVMSplit(nn.Module):
         self.color_n_comp = [16, 16, 16]
         self.color_data_dim = 27
         self.distance_scale = 25  # 5x5 sigma
-        self.weight_threshold = 0.0001 # confidence
+        self.weight_threshold = 0.0001  # confidence
         self.near = 2.0
         self.far = 6.0
         self.matMode = [[0, 1], [0, 2], [1, 2]]
@@ -195,7 +195,7 @@ class TensorVMSplit(nn.Module):
         # density_features.size() -- [985197]
         dense_shift = -10.0  # shift density to make density = 0 when feature == 0 for softplus
         return F.softplus(density_features + dense_shift)
-         
+
     def forward(self, rays_chunk, is_train=False):
         rays_o = rays_chunk[:, 0:3]
         rays_d = rays_chunk[:, 3:6]
