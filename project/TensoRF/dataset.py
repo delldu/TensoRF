@@ -90,18 +90,14 @@ def get_ray_directions(H, W, focal):
 
 
 class BlenderDataset(Dataset):
-    def __init__(self, datadir, split="train", downsample=1.0):
+    def __init__(self, datadir, split="train", downsample=1.0, batch_size=2048):
         # datadir = 'data/lego'
         self.near_far = [2.0, 6.0]
-        self.scene_bbox = torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]], dtype=torch.float32) / downsample
+        self.scene_bbox = [[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]]
         self.root_dir = datadir
         self.split = split
-        # self.transform = T.ToTensor()
-        # self.center = torch.mean(self.scene_bbox, axis=0).view(1, 1, 3)
-        # self.radius = (self.scene_bbox[1] - self.center).view(1, 1, 3)
         self.downsample = downsample
-        # self.center -- [[[0., 0., 0.]]]
-        # self.radius -- [[[1.5000, 1.5000, 1.5000]]]
+        self.batch_size = batch_size
         self.read_meta()
 
     def get_c2w_rays_rgbs(self, i):
@@ -162,7 +158,7 @@ class BlenderDataset(Dataset):
         self.all_rgbs = []
 
         frame_lists = list(range(0, len(self.meta["frames"])))
-        if self.split == "test":
+        if self.split == "test" or self.split == "val":
             frame_lists = frame_lists[:50]  # speed upp test
 
         blender2opencv = torch.tensor([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=torch.float32)
@@ -179,6 +175,10 @@ class BlenderDataset(Dataset):
 
         # filter rays
         self.all_rays, self.all_rgbs = self.filter_rays(self.all_rays, self.all_rgbs)
+        # shuffle
+        shuffle_index = torch.randperm(self.all_rays.size(0))
+        self.all_rays = self.all_rays[shuffle_index]
+        self.all_rgbs = self.all_rgbs[shuffle_index]
 
     def filter_rays(self, all_rays, all_rgbs, chunk=10240 * 5):
         N = torch.tensor(all_rays.shape[:-1]).prod()  # 64000000
@@ -189,8 +189,8 @@ class BlenderDataset(Dataset):
             rays_chunk = all_rays[index]
             rays_o, rays_d = rays_chunk[..., :3], rays_chunk[..., 3:6]
             vec = torch.where(rays_d == 0, torch.full_like(rays_d, 1e-6), rays_d)
-            rate_a = (self.scene_bbox[1] - rays_o) / vec
-            rate_b = (self.scene_bbox[0] - rays_o) / vec
+            rate_a = (torch.tensor(self.scene_bbox[1])/self.downsample - rays_o) / vec
+            rate_b = (torch.tensor(self.scene_bbox[0])/self.downsample - rays_o) / vec
             t_min = torch.minimum(rate_a, rate_b).amax(-1)
             t_max = torch.maximum(rate_a, rate_b).amin(-1)
             mask_inbbox = t_max > t_min
@@ -202,15 +202,20 @@ class BlenderDataset(Dataset):
         return all_rays[mask], all_rgbs[mask]
 
     def __len__(self):
-        return len(self.all_rgbs)
+        N = len(self.all_rgbs)
+        return N // self.batch_size + int(N % self.batch_size > 0)  # len(self.all_rgbs)
 
     def __getitem__(self, idx):
-        return {"rays": self.all_rays[idx], "rgbs": self.all_rgbs[idx]}
+        # return {"rays": self.all_rays[idx], "rgbs": self.all_rgbs[idx]}
+        start = idx * self.batch_size
+        end = (idx + 1) * self.batch_size
+        return {"rays": self.all_rays[start:end, :], "rgbs": self.all_rgbs[start:end, :]}
 
     def __repr__(self):
         return f"{self.split} sets: {self.root_dir}, {len(self.image_paths)} Images({self.W}x{self.H}), {len(self.all_rgbs)/1000000:.2f}M Rays"
 
 
 if __name__ == "__main__":
-    ds = BlenderDataset("data/lego", split="train", downsample=2.0)
+    ds = TensoRF.BlenderDataset("data/lego", split="test", downsample=1.0)
     print(ds)
+    pdb.set_trace()

@@ -92,18 +92,16 @@ class TensorVMSplit(nn.Module):
         self.dense_n_comp = [16, 16, 16]
         self.color_n_comp = [16, 16, 16]
         self.color_data_dim = 27
-        self.dense_shift = -10.0  # shift density to make density = 0 when feature == 0
-        self.alpha_mask_threshold = 0.0001
         self.distance_scale = 25  # 5x5 sigma
-        self.march_weight_threshold = 0.0001
+        self.weight_threshold = 0.0001 # confidence
         self.near = 2.0
         self.far = 6.0
-        self.step_ratio = 0.5
         self.matMode = [[0, 1], [0, 2], [1, 2]]
         self.vecMode = [2, 1, 0]
 
         self.register_buffer("aabb", torch.tensor(aabb))
         self.register_buffer("grid_size", torch.LongTensor(grid_size))
+
         self.render_model = MLPRender_Fea(self.color_data_dim, self.view_pe, self.feat_pe, self.feature_dim)
         self.dense_plane, self.dense_line = self.init_one_svd(self.dense_n_comp, self.grid_size, 0.1)
         self.color_plane, self.color_line = self.init_one_svd(self.color_n_comp, self.grid_size, 0.1)
@@ -113,7 +111,7 @@ class TensorVMSplit(nn.Module):
         unit = aabbSize / (self.grid_size - 1.0)
         diag = torch.sqrt(torch.sum(torch.square(aabbSize)))
         self.register_buffer("invaabbSize", 2.0 / aabbSize)
-        self.register_buffer("step_size", torch.mean(unit) * self.step_ratio)
+        self.register_buffer("step_size", torch.mean(unit) * 0.5)
         self.n_samples = int((diag / self.step_size).item()) + 1
 
     def init_one_svd(self, n_component, grid_size, scale):
@@ -164,6 +162,16 @@ class TensorVMSplit(nn.Module):
 
         return rays_points, tvalues, ~mask_outbbox
 
+    def compute_alpha(self, xyz):
+        # xyz.size() -- [16384, 3]
+        xyz_sampled = self.normalize_coord(xyz)
+        sigma_feature = self.dense2feature(xyz_sampled)
+        sigma = self.feature2dense(sigma_feature)
+
+        # self.step_size -- tensor(0.0118, device='cuda:0')
+        alpha = 1.0 - torch.exp(-sigma * self.step_size).view(xyz.shape[:-1])
+        return alpha  # alpha.size() -- [16384]
+
     def get_dense_alpha(self):
         X, Y, Z = self.grid_size  # grid_size = (128, 128, 128)
         samples = torch.stack(
@@ -185,18 +193,9 @@ class TensorVMSplit(nn.Module):
 
     def feature2dense(self, density_features):
         # density_features.size() -- [985197]
-        return F.softplus(density_features + self.dense_shift)  # self.dense_shift == -10 for softplus
-
-    def compute_alpha(self, xyz):
-        # xyz.size() -- [16384, 3]
-        xyz_sampled = self.normalize_coord(xyz)
-        sigma_feature = self.dense2feature(xyz_sampled)
-        sigma = self.feature2dense(sigma_feature)
-
-        # self.step_size -- tensor(0.0118, device='cuda:0')
-        alpha = 1.0 - torch.exp(-sigma * self.step_size).view(xyz.shape[:-1])
-        return alpha  # alpha.size() -- [16384]
-
+        dense_shift = -10.0  # shift density to make density = 0 when feature == 0 for softplus
+        return F.softplus(density_features + dense_shift)
+         
     def forward(self, rays_chunk, is_train=False):
         rays_o = rays_chunk[:, 0:3]
         rays_d = rays_chunk[:, 3:6]
@@ -218,7 +217,7 @@ class TensorVMSplit(nn.Module):
 
         rgbs = torch.zeros(N, S, 3).to(xyz_sampled.device)  # rgb is zeros
         alpha, weight = raw2alpha(sigma, t_deltas * self.distance_scale)  # weight.size() -- [4096, 440]
-        color_mask = weight > self.march_weight_threshold
+        color_mask = weight > self.weight_threshold
         if color_mask.any():
             color_features = self.color2feature(xyz_sampled[color_mask])
             valid_rgbs = self.render_model(rays_d[color_mask], color_features)

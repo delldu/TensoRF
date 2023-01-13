@@ -8,94 +8,72 @@
 # ***
 # ************************************************************************************/
 #
-import todos
+import argparse
+import os
+import pdb  # For debug
+import torch
+import torch.optim as optim
+
 import TensoRF
 
-import os
-import pdb
-import torch
-import numpy as np
-
-from tqdm.auto import tqdm
-
-
-torch.set_printoptions(sci_mode=False)
-
-
-class SimpleSampler:
-    def __init__(self, total, batch):
-        self.total = total
-        self.batch = batch
-        self.curr = total
-        self.ids = None
-
-    def nextids(self):
-        self.curr += self.batch
-        if self.curr + self.batch > self.total:
-            self.ids = torch.LongTensor(np.random.permutation(self.total))
-            self.curr = 0
-        return self.ids[self.curr : self.curr + self.batch]
-
-
 if __name__ == "__main__":
+    """Trainning model."""
 
-    todos.data.mkdir("output")
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("--outputdir", type=str, default="output", help="output directory")
+    parser.add_argument("--checkpoint", type=str, default="output/model.pth", help="checkpoint file")
+    parser.add_argument("--bs", type=int, default=4096, help="batch size")
+    parser.add_argument("--lr", type=float, default=1e-3, help="learning rate")
+    parser.add_argument("--epochs", type=int, default=1)
+    args = parser.parse_args()
 
-    model, device = TensoRF.get_model()
-    train_dataset = TensoRF.get_dataset()
-    grad_vars = model.get_optparam_groups()
-    batch_size = 2048
-    epochs = 3000
-    lr_decay_ratio = 0.1
-    progress_refresh_rate = 10
+    # Create directory to store result
+    if not os.path.exists(args.outputdir):
+        os.makedirs(args.outputdir)
 
-    lr_factor = lr_decay_ratio ** (1 / epochs)  # lr_decay_ratio -- 0.1
-    # lr_factor -- 0.9992327661102197
-    print("lr decay", lr_decay_ratio)
+    # Step 1: get data loader
+    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    #
+    #     class name file MUST BE created for net
+    #     please see load_class_names, save_class_names
+    #
+    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
+    train_dl = TensoRF.train_data(bs=args.bs)
+    valid_dl = TensoRF.valid_data(bs=args.bs)
+
+    # Step 2: get net
+    net, device = TensoRF.get_model(args.checkpoint, aabb=train_dl.dataset.scene_bbox)
+
+    #
+    # /************************************************************************************
+    # ***
+    # ***    MS: Construct Optimizer and Learning Rate Scheduler
+    # ***
+    # ************************************************************************************/
+    #
+    # params = [p for p in net.parameters() if p.requires_grad]
+    # optimizer = optim.SGD(params, lr=args.lr, momentum=0.9)
+
+    grad_vars = net.get_optparam_groups()
     optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
+    opt_step_size = (args.epochs + 2) // 3  # from 0.01 -> 0.001, 0.0001, 0.00001
+    lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=opt_step_size, gamma=0.1)
 
-    PSNRs = []
+    for epoch in range(args.epochs):
+        print("Epoch {}/{}, learning rate: {:.8f} ...".format(epoch + 1, args.epochs, lr_scheduler.get_last_lr()[0]))
+        TensoRF.train_epoch(train_dl, net, optimizer, device, tag="train")
+        TensoRF.valid_epoch(valid_dl, net, device, tag="valid")
 
-    allrays, allrgbs = train_dataset.all_rays, train_dataset.all_rgbs
-    trainingSampler = SimpleSampler(allrays.shape[0], batch_size)
+        lr_scheduler.step()
 
-    L1_reg_weight = 8e-5
-    print("initial L1_reg_weight", L1_reg_weight)
-
-    pbar = tqdm(range(epochs), miniters=progress_refresh_rate)
-    for iteration in pbar:
-        ray_indexs = trainingSampler.nextids()
-        rays_train, rgb_train = allrays[ray_indexs].to(device), allrgbs[ray_indexs].to(device)
-
-        # rgb_map, alphas_map, depth_map
-        # rays_train = rays_train.to(device)
-        rgb_map, depth_map = model(rays_train, is_train=True)
-
-        loss = torch.mean((rgb_map - rgb_train) ** 2)
-
-        # loss
-        total_loss = loss
-        loss_reg_L1 = model.dense_L1()
-        total_loss += L1_reg_weight * loss_reg_L1
-
-        optimizer.zero_grad()
-        total_loss.backward()
-        optimizer.step()
-
-        loss = loss.detach().item()
-
-        PSNRs.append(-10.0 * np.log(loss) / np.log(10.0))
-        # for param_group in optimizer.param_groups:
-        #     param_group["lr"] = param_group["lr"] * lr_factor  # xxxx8888
-
-        # Print the current values of the losses.
-        if iteration % progress_refresh_rate == 0:
-            pbar.set_description(
-                f"Iteration {iteration:05d}:" + f" train_psnr = {float(np.mean(PSNRs)):.2f}" + f" mse = {loss:.6f}"
-            )
-            PSNRs = []  # reset PSNR
-            for param_group in optimizer.param_groups:
-                param_group["lr"] = param_group["lr"] * lr_factor  # xxxx8888
-
-    torch.save(model.state_dict(), f"output/lego_tensorf.th")
+        #
+        # /************************************************************************************
+        # ***
+        # ***    MS: Define Save Model Strategy
+        # ***
+        # ************************************************************************************/
+        #
+        if epoch == (args.epochs // 2) or (epoch == args.epochs - 1):
+            print("Saving model ...")
+            torch.save(net.state_dict(), args.checkpoint)
